@@ -1,0 +1,20 @@
+{
+  "collection": [
+    {
+      "track": {
+        "id": 111,
+        "title": "Liked Track One",
+        "media": { "transcodings": [] },
+        "unexpected_field_from_future_api_version": "some value"
+      }
+    },
+    {
+      "track": {
+        "id": 222,
+        "title": "Liked Track Two",
+        "user": { "id": 5, "username": "artist-two" }
+      }
+    }
+  ],
+  "next_href": "https://api-v2.soundcloud.com/me/track_likes?cursor=abc"
+}

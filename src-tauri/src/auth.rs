@@ -131,7 +131,7 @@ pub async fn verify_auth() -> Result<bool, String> {
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) soundcloud-desktop/0.1")
         .build()
         .map_err(|e| e.to_string())?;
-    match crate::soundcloud::authed_get(&client, "/me", &token).await {
+    match crate::soundcloud::authed_get::<serde_json::Value>(&client, "/me", &[], Some(&token)).await {
         Ok(_) => Ok(true),
         Err(e) => Err(e.to_string()),
     }

@@ -1,8 +1,12 @@
-//! Minimal unofficial SoundCloud API client: client_id scraping + authed reads.
+//! Unofficial SoundCloud v2 API client: client_id scraping + authed reads.
 //! Auth technique: browser oauth_token cookie, same as validated in tools/sc-probe.
 
+pub mod api;
+pub mod commands;
+pub mod models;
+
 use regex::Regex;
-use serde_json::Value;
+use serde::de::DeserializeOwned;
 use std::sync::OnceLock;
 use std::sync::RwLock;
 
@@ -49,22 +53,41 @@ pub async fn get_client_id(client: &reqwest::Client) -> anyhow::Result<String> {
     Ok(id)
 }
 
+/// GET /resolve?url=... -- used for turning a soundcloud.com URL into a track/playlist object.
+pub async fn resolve_raw<T: DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    oauth_token: Option<&str>,
+) -> anyhow::Result<T> {
+    authed_get(client, "/resolve", &[("url", url)], oauth_token).await
+}
+
 /// Manual override, e.g. from a Settings screen, used when scraping breaks.
 #[tauri::command]
 pub fn set_client_id_override(id: String) {
     *cache().write().unwrap() = Some(id);
 }
 
-/// GET an api-v2 path with client_id + OAuth cookie auth, refreshing client_id once on 401.
-pub async fn authed_get(client: &reqwest::Client, path: &str, oauth_token: &str) -> anyhow::Result<Value> {
+/// GET an api-v2 path with client_id (+ optional OAuth cookie auth), refreshing
+/// client_id once on 401, and deserializing into `T` with tolerant field handling
+/// (unknown/missing fields don't panic -- see soundcloud::models).
+pub async fn authed_get<T: DeserializeOwned>(
+    client: &reqwest::Client,
+    path: &str,
+    query_extra: &[(&str, &str)],
+    oauth_token: Option<&str>,
+) -> anyhow::Result<T> {
     let mut client_id = get_client_id(client).await?;
     for attempt in 0..2 {
-        let resp = client
-            .get(format!("{API_V2}{path}"))
-            .query(&[("client_id", client_id.as_str()), ("limit", "20")])
-            .header("Authorization", format!("OAuth {oauth_token}"))
-            .send()
-            .await?;
+        let mut query: Vec<(&str, &str)> = vec![("client_id", client_id.as_str())];
+        query.extend_from_slice(query_extra);
+
+        let mut req = client.get(format!("{API_V2}{path}")).query(&query);
+        if let Some(token) = oauth_token {
+            req = req.header("Authorization", format!("OAuth {token}"));
+        }
+
+        let resp = req.send().await?;
         let status = resp.status();
         let text = resp.text().await?;
 
@@ -77,8 +100,8 @@ pub async fn authed_get(client: &reqwest::Client, path: &str, oauth_token: &str)
         if !status.is_success() {
             anyhow::bail!("{path} returned {status}: {}", if text.is_empty() { "<empty body>" } else { &text });
         }
-        let body: Value = serde_json::from_str(&text)
-            .map_err(|e| anyhow::anyhow!("{path} returned {status} but body wasn't valid JSON: {e}"))?;
+        let body: T = serde_json::from_str(&text)
+            .map_err(|e| anyhow::anyhow!("{path} returned {status} but body didn't match the expected shape: {e}"))?;
         return Ok(body);
     }
     unreachable!()

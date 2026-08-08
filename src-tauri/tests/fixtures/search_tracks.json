@@ -1,0 +1,42 @@
+{
+  "collection": [
+    {
+      "id": 123456789,
+      "title": "Example Track",
+      "permalink_url": "https://soundcloud.com/example/example-track",
+      "artwork_url": "https://i1.sndcdn.com/artworks-example.jpg",
+      "duration": 215000,
+      "user": {
+        "id": 987,
+        "username": "example-artist",
+        "avatar_url": "https://i1.sndcdn.com/avatar-example.jpg",
+        "permalink_url": "https://soundcloud.com/example-artist"
+      },
+      "media": {
+        "transcodings": [
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:123456789/progressive",
+            "format": { "protocol": "progressive", "mime_type": "audio/mpeg" }
+          },
+          {
+            "url": "https://api-v2.soundcloud.com/media/soundcloud:tracks:123456789/hls",
+            "format": { "protocol": "hls", "mime_type": "audio/mpeg" }
+          }
+        ]
+      },
+      "streamable": true,
+      "policy": "ALLOW",
+      "some_future_field_soundcloud_might_add": { "nested": true },
+      "reposts_count": 12,
+      "likes_count": 4200
+    },
+    {
+      "id": 42,
+      "title": "Track Missing Optional Fields",
+      "media": {},
+      "some_unexpected_null_field": null
+    }
+  ],
+  "total_results": 2,
+  "next_href": null
+}

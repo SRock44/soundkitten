@@ -54,6 +54,45 @@
     }
   }
 
+  type Track = { id: number; title: string | null };
+  type Playlist = { id: number; title: string | null; track_count: number | null };
+
+  let searchQuery = $state("");
+  let searchResults = $state<Track[]>([]);
+  let likes = $state<Track[]>([]);
+  let playlists = $state<Playlist[]>([]);
+  let apiStatus = $state("");
+
+  async function runSearch() {
+    apiStatus = "Searching...";
+    try {
+      searchResults = await invoke<Track[]>("sc_search", { query: searchQuery });
+      apiStatus = `Search: ${searchResults.length} result(s).`;
+    } catch (e) {
+      apiStatus = `Search failed: ${e}`;
+    }
+  }
+
+  async function loadLikes() {
+    apiStatus = "Loading likes...";
+    try {
+      likes = await invoke<Track[]>("sc_likes");
+      apiStatus = `Likes: ${likes.length} track(s).`;
+    } catch (e) {
+      apiStatus = `Loading likes failed: ${e}`;
+    }
+  }
+
+  async function loadPlaylists() {
+    apiStatus = "Loading playlists...";
+    try {
+      playlists = await invoke<Playlist[]>("sc_playlists");
+      apiStatus = `Playlists: ${playlists.length} found.`;
+    } catch (e) {
+      apiStatus = `Loading playlists failed: ${e}`;
+    }
+  }
+
   refreshStatus();
   listen<AuthEvent>("auth:result", async (event) => {
     if (event.payload.ok) {
@@ -91,6 +130,45 @@
       <button onclick={submitManualToken}>Save token</button>
     </div>
   {/if}
+
+  <hr />
+
+  <section>
+    <h2>API client check (Phase 3)</h2>
+    <div class="row">
+      <input placeholder="Search tracks..." bind:value={searchQuery} />
+      <button onclick={runSearch}>Search</button>
+      <button onclick={loadLikes}>Load likes</button>
+      <button onclick={loadPlaylists}>Load playlists</button>
+    </div>
+    {#if apiStatus}
+      <p class="status-msg">{apiStatus}</p>
+    {/if}
+    {#if searchResults.length}
+      <div class="results">
+        <h3>Search results</h3>
+        <ul>
+          {#each searchResults as t}<li>{t.title ?? `(untitled #${t.id})`}</li>{/each}
+        </ul>
+      </div>
+    {/if}
+    {#if likes.length}
+      <div class="results">
+        <h3>Likes</h3>
+        <ul>
+          {#each likes as t}<li>{t.title ?? `(untitled #${t.id})`}</li>{/each}
+        </ul>
+      </div>
+    {/if}
+    {#if playlists.length}
+      <div class="results">
+        <h3>Playlists</h3>
+        <ul>
+          {#each playlists as p}<li>{p.title ?? `(untitled #${p.id})`} ({p.track_count ?? "?"} tracks)</li>{/each}
+        </ul>
+      </div>
+    {/if}
+  </section>
 </main>
 
 <style>
@@ -151,6 +229,17 @@ button:hover {
   width: 100%;
   padding: 0.5em;
   margin: 0.5em 0;
+}
+
+.results {
+  text-align: left;
+  max-width: 32rem;
+  margin: 0.5rem 0;
+}
+
+.results ul {
+  max-height: 12rem;
+  overflow-y: auto;
 }
 
 @media (prefers-color-scheme: dark) {

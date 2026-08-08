@@ -1,5 +1,5 @@
-mod auth;
-mod soundcloud;
+pub mod auth;
+pub mod soundcloud;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +12,10 @@ pub fn run() {
             auth::start_login,
             auth::verify_auth,
             soundcloud::set_client_id_override,
+            soundcloud::commands::sc_search,
+            soundcloud::commands::sc_resolve,
+            soundcloud::commands::sc_likes,
+            soundcloud::commands::sc_playlists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

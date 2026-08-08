@@ -1,0 +1,24 @@
+{
+  "collection": [
+    {
+      "playlist": {
+        "id": 555,
+        "title": "My Playlist",
+        "permalink_url": "https://soundcloud.com/example/sets/my-playlist",
+        "track_count": 2,
+        "tracks": [
+          { "id": 1, "title": "One" },
+          { "id": 2, "title": "Two", "genre": "Electronic" }
+        ],
+        "sharing": "public",
+        "some_new_field": [1, 2, 3]
+      },
+      "created_at": "2026-01-01T00:00:00Z",
+      "type": "playlist-like"
+    },
+    {
+      "id": 556,
+      "title": "Bare Owned Playlist"
+    }
+  ]
+}
