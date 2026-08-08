@@ -63,6 +63,21 @@
   let playlists = $state<Playlist[]>([]);
   let apiStatus = $state("");
 
+  let audioEl: HTMLAudioElement;
+  let nowPlaying = $state<Track | null>(null);
+  let playbackStatus = $state("");
+
+  function play(track: Track) {
+    nowPlaying = track;
+    playbackStatus = "Loading...";
+    // Tauri rewrites custom schemes to http://<scheme>.localhost/... on Windows;
+    // this form also works on macOS/Linux in Tauri v2, so use it everywhere.
+    audioEl.src = `http://sc-stream.localhost/track/${track.id}`;
+    audioEl.play().catch((e) => {
+      playbackStatus = `Playback failed: ${e}`;
+    });
+  }
+
   async function runSearch() {
     apiStatus = "Searching...";
     try {
@@ -148,7 +163,7 @@
       <div class="results">
         <h3>Search results</h3>
         <ul>
-          {#each searchResults as t}<li>{t.title ?? `(untitled #${t.id})`}</li>{/each}
+          {#each searchResults as t}<li>{t.title ?? `(untitled #${t.id})`} <button onclick={() => play(t)}>▶</button></li>{/each}
         </ul>
       </div>
     {/if}
@@ -156,7 +171,7 @@
       <div class="results">
         <h3>Likes</h3>
         <ul>
-          {#each likes as t}<li>{t.title ?? `(untitled #${t.id})`}</li>{/each}
+          {#each likes as t}<li>{t.title ?? `(untitled #${t.id})`} <button onclick={() => play(t)}>▶</button></li>{/each}
         </ul>
       </div>
     {/if}
@@ -168,6 +183,20 @@
         </ul>
       </div>
     {/if}
+  </section>
+
+  <section>
+    <h2>Now playing</h2>
+    <p class="status-msg">{nowPlaying ? (nowPlaying.title ?? `Track #${nowPlaying.id}`) : "Nothing playing"}</p>
+    {#if playbackStatus}
+      <p class="status-msg">{playbackStatus}</p>
+    {/if}
+    <audio
+      bind:this={audioEl}
+      controls
+      onerror={() => (playbackStatus = `Playback error: ${audioEl.error?.message ?? "unknown"}`)}
+      onplaying={() => (playbackStatus = "Playing.")}
+    ></audio>
   </section>
 </main>
 

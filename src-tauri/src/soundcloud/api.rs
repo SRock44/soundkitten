@@ -21,6 +21,11 @@ pub async fn resolve_track(client: &reqwest::Client, url: &str, oauth_token: Opt
     resolve_raw(client, url, oauth_token).await
 }
 
+pub async fn get_track(client: &reqwest::Client, track_id: i64, oauth_token: Option<&str>) -> anyhow::Result<Track> {
+    let path = format!("/tracks/{track_id}");
+    authed_get(client, &path, &[], oauth_token).await
+}
+
 pub async fn get_likes(client: &reqwest::Client, oauth_token: &str) -> anyhow::Result<Vec<Track>> {
     let user_id = current_user_id(client, oauth_token).await?;
     let path = format!("/users/{user_id}/track_likes");

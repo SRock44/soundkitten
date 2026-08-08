@@ -1,10 +1,12 @@
 pub mod auth;
+pub mod playback;
 pub mod soundcloud;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .register_asynchronous_uri_scheme_protocol("sc-stream", playback::handler)
         .invoke_handler(tauri::generate_handler![
             auth::is_logged_in,
             auth::logout,
