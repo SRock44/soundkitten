@@ -53,6 +53,30 @@ pub async fn get_client_id(client: &reqwest::Client) -> anyhow::Result<String> {
     Ok(id)
 }
 
+/// GET an absolute URL (e.g. a `next_href` pagination cursor) with client_id
+/// (+ optional OAuth auth) appended, for following pagination cursors that
+/// SoundCloud returns as full URLs rather than relative paths.
+pub async fn get_full_url<T: DeserializeOwned>(
+    client: &reqwest::Client,
+    url: &str,
+    oauth_token: Option<&str>,
+) -> anyhow::Result<T> {
+    let client_id = get_client_id(client).await?;
+    let mut req = client.get(url).query(&[("client_id", client_id.as_str())]);
+    if let Some(token) = oauth_token {
+        req = req.header("Authorization", format!("OAuth {token}"));
+    }
+    let resp = req.send().await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("{url} returned {status}: {}", if text.is_empty() { "<empty body>" } else { &text });
+    }
+    let body: T = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("{url} returned {status} but body didn't match the expected shape: {e}"))?;
+    Ok(body)
+}
+
 /// GET /resolve?url=... -- used for turning a soundcloud.com URL into a track/playlist object.
 pub async fn resolve_raw<T: DeserializeOwned>(
     client: &reqwest::Client,
@@ -60,6 +84,59 @@ pub async fn resolve_raw<T: DeserializeOwned>(
     oauth_token: Option<&str>,
 ) -> anyhow::Result<T> {
     authed_get(client, "/resolve", &[("url", url)], oauth_token).await
+}
+
+/// PUT an api-v2 path with client_id + OAuth auth and no body -- used for
+/// like/repost-style "create this relationship" actions.
+pub async fn authed_put(client: &reqwest::Client, path: &str, oauth_token: &str) -> anyhow::Result<()> {
+    authed_mutate(client, reqwest::Method::PUT, path, oauth_token).await
+}
+
+/// DELETE an api-v2 path with client_id + OAuth auth -- used for
+/// unlike/unrepost-style "remove this relationship" actions.
+pub async fn authed_delete(client: &reqwest::Client, path: &str, oauth_token: &str) -> anyhow::Result<()> {
+    authed_mutate(client, reqwest::Method::DELETE, path, oauth_token).await
+}
+
+async fn authed_mutate(client: &reqwest::Client, method: reqwest::Method, path: &str, oauth_token: &str) -> anyhow::Result<()> {
+    let client_id = get_client_id(client).await?;
+    let resp = client
+        .request(method, format!("{API_V2}{path}"))
+        .query(&[("client_id", client_id.as_str())])
+        .header("Authorization", format!("OAuth {oauth_token}"))
+        .send()
+        .await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        anyhow::bail!("{path} returned {status}: {}", if text.is_empty() { "<empty body>" } else { &text });
+    }
+    Ok(())
+}
+
+/// POST an api-v2 path with a JSON body, client_id + OAuth auth.
+pub async fn authed_post<T: DeserializeOwned>(
+    client: &reqwest::Client,
+    path: &str,
+    body: &serde_json::Value,
+    oauth_token: &str,
+) -> anyhow::Result<T> {
+    let client_id = get_client_id(client).await?;
+    let resp = client
+        .post(format!("{API_V2}{path}"))
+        .query(&[("client_id", client_id.as_str())])
+        .header("Authorization", format!("OAuth {oauth_token}"))
+        .json(body)
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("{path} returned {status}: {}", if text.is_empty() { "<empty body>" } else { &text });
+    }
+    let parsed: T = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("{path} returned {status} but body didn't match the expected shape: {e}"))?;
+    Ok(parsed)
 }
 
 /// Manual override, e.g. from a Settings screen, used when scraping breaks.

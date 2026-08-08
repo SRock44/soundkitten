@@ -13,8 +13,11 @@
     "windows": [
       {
         "title": "SoundCloud Desktop",
-        "width": 800,
-        "height": 600
+        "width": 1100,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 480,
+        "decorations": false
       }
     ],
     "security": {

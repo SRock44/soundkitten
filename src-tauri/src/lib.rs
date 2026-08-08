@@ -18,6 +18,23 @@ pub fn run() {
             soundcloud::commands::sc_resolve,
             soundcloud::commands::sc_likes,
             soundcloud::commands::sc_playlists,
+            soundcloud::commands::sc_me,
+            soundcloud::commands::sc_user_profile,
+            soundcloud::commands::sc_user_tracks,
+            soundcloud::commands::sc_search_users,
+            soundcloud::commands::sc_feed,
+            soundcloud::commands::sc_like_track,
+            soundcloud::commands::sc_unlike_track,
+            soundcloud::commands::sc_repost_track,
+            soundcloud::commands::sc_unrepost_track,
+            soundcloud::commands::sc_track_comments,
+            soundcloud::commands::sc_post_comment,
+            soundcloud::commands::sc_user_reposts,
+            soundcloud::commands::sc_user_playlists,
+            soundcloud::commands::sc_user_followers,
+            soundcloud::commands::sc_user_followings,
+            soundcloud::commands::sc_user_comments,
+            soundcloud::commands::sc_playlist,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

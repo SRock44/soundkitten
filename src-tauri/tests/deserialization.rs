@@ -14,14 +14,14 @@ fn parses_search_tracks_with_unknown_and_missing_fields() {
     let full = &parsed.collection[0];
     assert_eq!(full.id, 123456789);
     assert_eq!(full.title.as_deref(), Some("Example Track"));
-    let transcoding = full.preferred_transcoding().expect("progressive transcoding should be picked");
-    assert!(transcoding.url.contains("progressive"));
+    let transcoding = full.candidate_transcodings();
+    assert!(transcoding.first().expect("progressive transcoding should be picked").url.contains("progressive"));
 
     let sparse = &parsed.collection[1];
     assert_eq!(sparse.id, 42);
     assert!(sparse.title.is_some());
     assert!(sparse.user.is_none());
-    assert!(sparse.preferred_transcoding().is_none());
+    assert!(sparse.candidate_transcodings().is_empty());
 }
 
 #[test]
