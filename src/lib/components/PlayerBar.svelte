@@ -1,5 +1,7 @@
 <script lang="ts">
   import { player } from "../stores/player.svelte";
+  import { api } from "../api";
+  import { likes } from "../stores/likes.svelte";
   import { formatDuration } from "../types";
   import type { Track } from "../types";
   import Icon from "./Icon.svelte";
@@ -12,7 +14,24 @@
   let isPlaying = $state(false);
   let showQueue = $state(false);
   let dragIndex = $state<number | null>(null);
+  let likeBusy = $state(false);
   let progressPct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
+  let isLiked = $derived(player.current ? likes.has(player.current.id) : false);
+
+  async function toggleLike() {
+    const track = player.current;
+    if (!track || likeBusy) return;
+    likeBusy = true;
+    const next = !likes.has(track.id);
+    try {
+      if (next) await api.likeTrack(track.id);
+      else await api.unlikeTrack(track.id);
+      likes.set(track.id, next);
+    } catch (e) {
+      player.error = `Failed to ${next ? "like" : "unlike"} track: ${e}`;
+    }
+    likeBusy = false;
+  }
 
   $effect(() => {
     player.attach(audioEl);
@@ -69,7 +88,7 @@
     ondurationchange={() => (duration = audioEl.duration || 0)}
     onplay={() => (isPlaying = true)}
     onpause={() => (isPlaying = false)}
-    onended={() => player.next()}
+    onended={() => player.onTrackEnded()}
     onerror={() => (player.error = audioEl.error?.message ?? "playback error")}
   ></audio>
 
@@ -130,14 +149,43 @@
     </div>
 
     <div class="controls">
+      <button
+        class="toggle-btn"
+        class:active={player.shuffle}
+        onclick={() => player.toggleShuffle()}
+        aria-label="Shuffle"
+        title="Shuffle"
+      >
+        <Icon name="shuffle" size={14} />
+      </button>
       <button onclick={() => player.previous()} disabled={!player.current} aria-label="Previous"><Icon name="skip-back" /></button>
       <button class="play" onclick={() => player.toggle()} disabled={!player.current} aria-label="Play/Pause">
         <Icon name={isPlaying ? "pause" : "play"} size={18} />
       </button>
       <button onclick={() => player.next()} disabled={!player.current} aria-label="Next"><Icon name="skip-forward" /></button>
+      <button
+        class="toggle-btn"
+        class:active={player.loop !== "off"}
+        onclick={() => player.cycleLoop()}
+        aria-label="Loop"
+        title={player.loop === "one" ? "Repeat one" : player.loop === "all" ? "Repeat all" : "Repeat off"}
+      >
+        <Icon name="repeat" size={14} />
+        {#if player.loop === "one"}<span class="loop-one-badge">1</span>{/if}
+      </button>
     </div>
 
     <div class="right-controls">
+      <button
+        class="like-btn"
+        class:active={isLiked}
+        onclick={toggleLike}
+        disabled={!player.current || likeBusy}
+        aria-label={isLiked ? "Unlike" : "Like"}
+        title={isLiked ? "Unlike" : "Like"}
+      >
+        <Icon name={isLiked ? "heart-filled" : "heart"} size={15} />
+      </button>
       <div class="time-display">
         <span>{formatDuration(currentTime * 1000)}</span>
         <span class="sep">/</span>
@@ -153,6 +201,8 @@
 
   {#if player.error}
     <div class="error">{player.error}</div>
+  {:else if player.notice}
+    <div class="notice">{player.notice}</div>
   {/if}
 </div>
 
@@ -280,6 +330,36 @@
   padding: 0.25rem;
 }
 
+.toggle-btn {
+  position: relative;
+  color: #999 !important;
+}
+
+.toggle-btn:hover {
+  color: #ccc !important;
+}
+
+.toggle-btn.active {
+  color: var(--accent) !important;
+}
+
+.loop-one-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  font-size: 0.55rem;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--accent);
+  color: white;
+  border-radius: 50%;
+  width: 11px;
+  height: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .controls button:disabled {
   opacity: 0.35;
   cursor: default;
@@ -336,6 +416,31 @@
   background: rgba(255, 255, 255, 0.1);
 }
 
+.like-btn {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #a0a0a0;
+  padding: 0.3rem;
+  border-radius: 4px;
+}
+
+.like-btn:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.like-btn.active {
+  color: var(--accent);
+}
+
+.like-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .volume {
   display: flex;
   align-items: center;
@@ -352,17 +457,26 @@
   accent-color: var(--accent);
 }
 
-.error {
+.error,
+.notice {
   position: absolute;
   bottom: 100%;
   left: 1.25rem;
   right: 1.25rem;
-  background: var(--error-bg);
-  color: var(--error-text);
   padding: 0.4rem 0.75rem;
   border-radius: 6px;
   font-size: 0.85rem;
   margin-bottom: 0.5rem;
+}
+
+.error {
+  background: var(--error-bg);
+  color: var(--error-text);
+}
+
+.notice {
+  background: var(--titlebar-bg);
+  color: var(--titlebar-fg-muted);
 }
 
 .queue-panel {
