@@ -46,6 +46,16 @@ export const api = {
   unfollowUserV2: (userId: number) => invoke<void>("sc_unfollow_user_v2", { userId }),
 };
 
+// Tauri's custom URI scheme handlers are addressed differently per
+// platform: WebView2 (Windows) requires the scheme remapped to an
+// http://<scheme>.localhost virtual host, while WKWebView (macOS/iOS) and
+// WebKitGTK (Linux) address the scheme directly. The Rust handler
+// (playback.rs) only reads the request path, so it's identical either way
+// -- only this URL construction needs to branch. Confirmed live: the
+// Windows-only form silently fails to route on macOS ("Load failed" on
+// every play attempt), since WKWebView just treats "sc-stream.localhost"
+// as a literal, unresolvable hostname instead of the custom protocol.
 export function streamUrl(trackId: number): string {
-  return `http://sc-stream.localhost/track/${trackId}`;
+  const isWindows = navigator.userAgent.includes("Windows");
+  return isWindows ? `http://sc-stream.localhost/track/${trackId}` : `sc-stream://localhost/track/${trackId}`;
 }
