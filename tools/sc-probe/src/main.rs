@@ -260,9 +260,79 @@ async fn run_oauth_checks(port: u16) -> Result<()> {
         total += 1;
         passed += 1; // informational sweep, not a pass/fail check
         println!("    (see above for results, this sweep doesn't count as pass/fail)\n");
+
+        // Targeted follow-up: POST/DELETE /likes/tracks/{track_urn} specifically.
+        // Not covered above, that sweep only tried PUT on /likes/tracks/{id}
+        // with a bare numeric id, never POST/DELETE, and never the URN form
+        // (soundcloud:tracks:<id>) SoundCloud uses as the canonical resource
+        // identifier elsewhere in their API.
+        let urn = track_check
+            .as_ref()
+            .and_then(|t| t.get("urn"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("soundcloud:tracks:{id}"));
+        println!("    Targeted check: POST/DELETE /likes/tracks/{{track_urn}} (urn = {urn}, track has urn field: {}):", track_check.as_ref().and_then(|t| t.get("urn")).is_some());
+
+        let urn_encoded = urn.replace(':', "%3A");
+        for path in [
+            format!("/likes/tracks/{id}"),
+            format!("/likes/tracks/{urn}"),
+            format!("/likes/tracks/{urn_encoded}"),
+        ] {
+            match oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await {
+                Ok((status, body)) => {
+                    println!("      POST {path} -> {status}: {}", truncate(&body.to_string(), 150));
+                    if status.is_success() {
+                        // Real endpoint. Confirm DELETE (unlike) works, then
+                        // immediately restore the like so account state ends
+                        // up unchanged from before this run.
+                        let del = oauth::official_write(&client, reqwest::Method::DELETE, &path, &tokens.access_token).await;
+                        match &del {
+                            Ok((s, b)) => println!("      DELETE {path} -> {s}: {}", truncate(&b.to_string(), 150)),
+                            Err(e) => println!("      DELETE {path} -> request failed: {e}"),
+                        }
+                        let restore = oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await;
+                        println!("      restore POST {path} -> {:?}", restore.map(|(s, _)| s));
+                    }
+                }
+                Err(e) => println!("      POST {path} -> request failed: {e}"),
+            }
+        }
+        println!();
     } else {
         total += 1;
         println!("[{total}] like-endpoint sweep ... SKIPPED (no existing like to target)");
+    }
+
+    // Playlist likes: same documented shape (POST/DELETE /likes/playlists/{playlist_urn}),
+    // confirming it actually behaves the same as the now-confirmed track-like endpoint
+    // rather than assuming it does just because the docs list it identically.
+    let playlists = check!(
+        "authed GET /me/playlists (for playlist-like check)",
+        oauth::authed_official_get(&client, "/me/playlists", &tokens.access_token).await
+    );
+    if let Some(playlist_id) = playlists.as_ref().and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|p| p.get("id")).and_then(|v| v.as_i64()) {
+        let path = format!("/likes/playlists/{playlist_id}");
+        println!("    Targeted check: POST/DELETE {path} (playlist likes):");
+        match oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await {
+            Ok((status, body)) => {
+                println!("      POST {path} -> {status}: {}", truncate(&body.to_string(), 150));
+                if status.is_success() {
+                    let del = oauth::official_write(&client, reqwest::Method::DELETE, &path, &tokens.access_token).await;
+                    match &del {
+                        Ok((s, b)) => println!("      DELETE {path} -> {s}: {}", truncate(&b.to_string(), 150)),
+                        Err(e) => println!("      DELETE {path} -> request failed: {e}"),
+                    }
+                    let restore = oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await;
+                    println!("      restore POST {path} -> {:?}", restore.map(|(s, _)| s));
+                }
+            }
+            Err(e) => println!("      POST {path} -> request failed: {e}"),
+        }
+        println!();
+    } else {
+        println!("    (no playlist available to test playlist-like endpoint)\n");
     }
 
     // Known-public account used only to test whether a follow WRITE endpoint
