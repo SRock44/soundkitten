@@ -18,14 +18,14 @@
 
 ## Why
 
-SoundCloud's official desktop app is an Electron wrapper with a sluggish UI and a heavy memory footprint. SoundKitten is a native-feeling alternative: a Rust backend, a native OS webview instead of a bundled Chromium, and a UI that matches soundcloud.com rather than reinventing it.
+SoundCloud dropped their native Windows desktop app entirely. On Windows 11, the official "app" is just the web player installed as a Chrome PWA: no real desktop integration, nothing a browser tab wasn't already doing, and you need Chrome installed at all. SoundKitten is an actual native app, with a Rust backend, a native OS webview instead of a bundled browser, and a UI that matches soundcloud.com rather than reinventing it.
 
 ## Features
 
 - Search, stream, like, comment, and browse playlists/likes/followers just like the web app
 - Home feed with SoundCloud's own curated sections (Trending by genre, personalized mixes, etc.)
 - Shuffle and repeat, drag-to-reorder queue, and playback state that survives an app restart
-- Clean, native window chrome — no bundled browser UI, no bloat
+- Clean, native window chrome, no bundled browser UI, no bloat
 - Auto-updates, checked on launch (opt-in per update, never silent)
 
 ## Download
@@ -34,7 +34,7 @@ Grab the latest installer for your platform from [Releases](../../releases). Win
 
 ## How it works
 
-SoundCloud doesn't offer a fully-functional public API for third-party apps (their official OAuth flow has a long-standing upstream bug — see [`soundcloud/api` #513](https://github.com/soundcloud/api/issues/513) and [#393](https://github.com/soundcloud/api/issues/393)), so SoundKitten falls back to the same technique browser extensions and tools like `scdl` use: a `client_id` scraped from SoundCloud's own public web app bundle, combined with the user's own `oauth_token` session cookie — the same access their browser already has when logged into soundcloud.com. No credentials are sent anywhere but SoundCloud's own API; nothing is proxied through a third-party server.
+SoundCloud doesn't offer a fully-functional public API for third-party apps. Their official OAuth flow has a long-standing upstream bug (see [`soundcloud/api` #513](https://github.com/soundcloud/api/issues/513) and [#393](https://github.com/soundcloud/api/issues/393)), so SoundKitten falls back to the same technique browser extensions and tools like `scdl` use: a `client_id` scraped from SoundCloud's own public web app bundle, combined with the user's own `oauth_token` session cookie, which is the same access their browser already has when logged into soundcloud.com. No credentials are sent anywhere but SoundCloud's own API; nothing is proxied through a third-party server.
 
 **This app is streaming-only.** It does not download, save, export, or otherwise persist audio files, to stay within SoundCloud's API Terms of Use. DRM-protected tracks (major-label content served over encrypted HLS) are detected and clearly marked as unplayable, with a link out to soundcloud.com, rather than pretending they might work.
 
@@ -65,7 +65,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for how to get set up and what to expect from the PR process.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to get set up and what to expect from the PR process.
 
 ## License
 

@@ -27,6 +27,6 @@ body:
   - type: markdown
     attributes:
       value: |
-        A couple of things are intentionally out of scope regardless of interest — see [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-boundaries):
+        A couple of things are intentionally out of scope regardless of interest. See [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-boundaries):
         - Download/export of audio files (SoundCloud's API Terms of Use)
         - DRM circumvention (not technically possible without a licensed CDM)
