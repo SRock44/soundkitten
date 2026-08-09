@@ -4,6 +4,7 @@ import { isPlayable, type Track } from "../types";
 const VOLUME_KEY = "sc-desktop:volume";
 const SHUFFLE_KEY = "sc-desktop:shuffle";
 const LOOP_KEY = "sc-desktop:loop";
+const PLAYBACK_KEY = "sc-desktop:playback";
 
 /**
  * Guards every localStorage access. Not just defensive theater: Node's
@@ -55,6 +56,23 @@ export class PlayerStore {
    * fresh one, which breaks the everyday "go back and forward" case.
    */
   private shuffleFrontier = -1;
+  private lastPersistAt = 0;
+  /**
+   * The queue in its real, unshuffled context order -- kept in sync with
+   * every structural change (play/addToQueue/playNext/removeFromQueue), but
+   * NOT with shuffled-view reordering. Turning shuffle off rebuilds `queue`
+   * from this, which is the piece that was previously missing entirely:
+   * `queue` was shuffled in place with no backup, so disabling shuffle had
+   * nothing to restore from and just kept whatever shuffled order was there.
+   */
+  private originalQueue: Track[] = [];
+  /**
+   * A restored-but-not-yet-loaded position, set by restore() and consumed by
+   * the first toggle()/play. Exposed (not private) so the UI can show the
+   * right scrubber position immediately without that requiring a network
+   * fetch -- see restore()'s comment for why loading is deferred at all.
+   */
+  pendingSeek = $state<number | null>(null);
 
   get current(): Track | null {
     return this.queueIndex >= 0 && this.queueIndex < this.queue.length ? this.queue[this.queueIndex] : null;
@@ -69,6 +87,70 @@ export class PlayerStore {
     el.volume = this.volume;
   }
 
+  /**
+   * Restores the queue and "where you left off" position from the last app
+   * run, mirroring soundcloud.com's own behavior -- but deliberately does
+   * NOT fetch/stream anything yet. It used to call _loadCurrent() right
+   * away, which meant every single cold launch immediately resolved and
+   * streamed a track's audio before the user had touched anything -- one
+   * more request in the exact burst (alongside likes/playlists/me/...) that
+   * was getting the account rate-limited. Now it only sets state (instant,
+   * no network), and the real load happens lazily on the first toggle()
+   * once the user actually presses play.
+   */
+  async restore() {
+    if (!this.audioEl) return;
+    const raw = safeStorageGet(PLAYBACK_KEY);
+    if (!raw) return;
+    let saved: { queue: Track[]; originalQueue?: Track[]; queueIndex: number; positionSeconds: number } | null = null;
+    try {
+      saved = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!saved || !Array.isArray(saved.queue) || saved.queue.length === 0) return;
+    if (saved.queueIndex < 0 || saved.queueIndex >= saved.queue.length) return;
+
+    this.queue = saved.queue;
+    // Older saves (or a corrupted/partial one) may lack this -- fall back to
+    // the shuffled queue itself rather than leaving shuffle-off with nothing
+    // to restore to.
+    this.originalQueue = Array.isArray(saved.originalQueue) && saved.originalQueue.length > 0 ? saved.originalQueue : saved.queue;
+    this.queueIndex = saved.queueIndex;
+    this.shuffleFrontier = saved.queueIndex;
+    this.pendingSeek = saved.positionSeconds > 0 ? saved.positionSeconds : null;
+  }
+
+  /** Immediate (non-throttled) persist -- call after any queue/queueIndex mutation. */
+  private _persistQueue() {
+    if (this.queue.length === 0) {
+      safeStorageSet(PLAYBACK_KEY, "");
+      return;
+    }
+    const positionSeconds = this.audioEl?.currentTime ?? 0;
+    safeStorageSet(
+      PLAYBACK_KEY,
+      JSON.stringify({ queue: this.queue, originalQueue: this.originalQueue, queueIndex: this.queueIndex, positionSeconds }),
+    );
+  }
+
+  /**
+   * Position-only persist meant to be called from <audio>'s frequent
+   * ontimeupdate -- throttled to at most once every 5s so playback progress
+   * doesn't hammer localStorage on every tick. Pass `force` for natural
+   * checkpoints like pause, where a fresher save is worth the one-off cost.
+   */
+  savePositionTick(force = false) {
+    const now = Date.now();
+    if (!force && now - this.lastPersistAt < 5000) return;
+    this.lastPersistAt = now;
+    this._persistQueue();
+  }
+
+  clearPersistedPlayback() {
+    safeStorageSet(PLAYBACK_KEY, "");
+  }
+
   setVolume(v: number) {
     this.volume = v;
     if (this.audioEl) this.audioEl.volume = v;
@@ -77,8 +159,23 @@ export class PlayerStore {
 
   toggleShuffle() {
     this.shuffle = !this.shuffle;
-    this.shuffleFrontier = this.queueIndex;
     safeStorageSet(SHUFFLE_KEY, String(this.shuffle));
+    // Shuffle the whole remaining queue immediately (rather than only the
+    // lazy "next slot" _shuffleNextSlot does as you advance) so the "Up
+    // next" panel actually reflects shuffled order right away instead of
+    // still showing the original sequence until you've pressed Next once.
+    if (this.shuffle) this._shuffleRemainingNow();
+    else this._restoreOriginalOrder();
+    this._persistQueue();
+  }
+
+  /** Rebuilds `queue` from `originalQueue`, keeping the currently-playing track as current. */
+  private _restoreOriginalOrder() {
+    const current = this.current;
+    this.queue = [...this.originalQueue];
+    const idx = current ? this.originalQueue.findIndex((t) => t.id === current.id) : -1;
+    this.queueIndex = idx >= 0 ? idx : Math.min(this.queueIndex, this.queue.length - 1);
+    this.shuffleFrontier = this.queueIndex;
   }
 
   /** Cycles off -> all -> one -> off. */
@@ -91,41 +188,61 @@ export class PlayerStore {
   /** Replace the queue with `context` (or just `track`) and play `track` immediately. */
   play(track: Track, context: Track[] = []) {
     if (!this.audioEl) return;
+    this.pendingSeek = null; // starting a fresh context invalidates any restored-but-unloaded position
     const list = context.length ? context : [track];
     const idx = list.findIndex((t) => t.id === track.id);
     this.queue = list;
+    this.originalQueue = list; // new context -- this is the new unshuffled baseline
     this.queueIndex = idx >= 0 ? idx : 0;
     this.shuffleFrontier = this.queueIndex;
+    if (this.shuffle) this._shuffleRemainingNow();
     this._loadCurrent(1, 0);
     // pushed after _loadCurrent so that if `track` itself turns out to be
     // unplayable and gets auto-skipped, we record what actually started
     // playing rather than the track the user clicked.
     this._pushHistory(this.current);
+    this._persistQueue();
   }
 
   /** Insert `track` immediately after the currently playing one. */
   playNext(track: Track) {
     const insertAt = this.queueIndex < 0 ? 0 : this.queueIndex + 1;
     this.queue = [...this.queue.slice(0, insertAt), track, ...this.queue.slice(insertAt)];
+    const origInsertAt = this._origIndexOfCurrent() + 1;
+    this.originalQueue = [...this.originalQueue.slice(0, origInsertAt), track, ...this.originalQueue.slice(origInsertAt)];
     if (this.queueIndex < 0) {
       this.queueIndex = 0;
       this._loadCurrent();
     }
+    this._persistQueue();
   }
 
   /** Append `track` to the end of the queue. */
   addToQueue(track: Track) {
     this.queue = [...this.queue, track];
+    this.originalQueue = [...this.originalQueue, track];
     if (this.queueIndex < 0) {
       this.queueIndex = 0;
       this._loadCurrent();
     }
+    this._persistQueue();
   }
 
   removeFromQueue(index: number) {
     if (index === this.queueIndex) return; // can't remove the currently-playing track this way
+    const removed = this.queue[index];
     this.queue = this.queue.filter((_, i) => i !== index);
+    if (removed) this.originalQueue = this.originalQueue.filter((t) => t.id !== removed.id);
     if (index < this.queueIndex) this.queueIndex -= 1;
+    this._persistQueue();
+  }
+
+  /** Index of the currently-playing track within `originalQueue` (falls back to the end). */
+  private _origIndexOfCurrent(): number {
+    const current = this.current;
+    if (!current) return this.originalQueue.length - 1;
+    const idx = this.originalQueue.findIndex((t) => t.id === current.id);
+    return idx >= 0 ? idx : this.originalQueue.length - 1;
   }
 
   /** Moves the track at `from` to `to` (only meaningful for upcoming, not-yet-played tracks). */
@@ -135,11 +252,22 @@ export class PlayerStore {
     const next = [...this.queue];
     const [moved] = next.splice(from, 1);
     next.splice(to, 0, moved);
+    // Only mirrored into the unshuffled baseline when not currently
+    // shuffled -- dragging within a shuffled view is a temporary rearrange
+    // of that view, not a redefinition of "what order this was in" for when
+    // shuffle gets turned back off.
+    if (!this.shuffle) {
+      const origNext = [...this.originalQueue];
+      const [movedOrig] = origNext.splice(from, 1);
+      origNext.splice(to, 0, movedOrig);
+      this.originalQueue = origNext;
+    }
     this.queue = next;
     // queueIndex only shifts if the currently-playing track's position moved
     // relative to it (its own index never changes since we forbid moving it).
     if (from < this.queueIndex && to >= this.queueIndex) this.queueIndex -= 1;
     else if (from > this.queueIndex && to <= this.queueIndex) this.queueIndex += 1;
+    this._persistQueue();
   }
 
   /** Safety valve against skipping through an entire all-DRM queue forever. */
@@ -151,12 +279,21 @@ export class PlayerStore {
    * error text (e.g. "DRM-protected", "no transcodings") instead of the
    * browser's generic, undiagnosable "no supported source" MediaError.
    *
+   * This does mean a whole track's compressed bytes sit in a JS Blob for as
+   * long as it's playing -- worth knowing, but not worth "fixing" by having
+   * <audio> issue its own separate request instead: the sc-stream:// handler
+   * (src-tauri/src/playback.rs) fully downloads/assembles a track server-side
+   * before responding at all (no streaming response), so a second fetch
+   * would re-run that entire download against SoundCloud's CDN rather than
+   * saving anything -- strictly worse for both bandwidth and latency.
+   *
    * `direction`/`skipDepth` thread through an unplayable-track auto-skip
    * chain (see `_skipUnplayable`) -- when the track we land on turns out to
    * be DRM-locked or otherwise fails to load, we advance one more step in
    * the same direction and try again, rather than leaving playback stuck.
    */
-  private async _loadCurrent(direction: 1 | -1 = 1, skipDepth = 0) {
+  private async _loadCurrent(direction: 1 | -1 = 1, skipDepth = 0, opts: { autoplay?: boolean; seekTo?: number } = {}) {
+    const autoplay = opts.autoplay ?? true;
     if (!this.audioEl || !this.current) return;
     const track = this.current;
     const token = ++this.loadToken;
@@ -165,7 +302,7 @@ export class PlayerStore {
     // Checked up front (mirrors the backend's DRM detection) so a known-DRM
     // track never even round-trips through fetch before being skipped.
     if (!isPlayable(track)) {
-      this._skipUnplayable(track, direction, skipDepth, "protected by SoundCloud DRM");
+      this._skipUnplayable(track, direction, skipDepth, "protected by SoundCloud DRM", { autoplay });
       return;
     }
 
@@ -189,7 +326,7 @@ export class PlayerStore {
       } catch {
         message = errorHeader ?? "";
       }
-      this._skipUnplayable(track, direction, skipDepth, message || `HTTP ${resp.status}`);
+      this._skipUnplayable(track, direction, skipDepth, message || `HTTP ${resp.status}`, { autoplay });
       return;
     }
 
@@ -200,9 +337,22 @@ export class PlayerStore {
     this.currentBlobUrl = URL.createObjectURL(blob);
     this.audioEl.src = this.currentBlobUrl;
     if (skipDepth > 0) this.notice = null; // successfully recovered from a skip chain
-    this.audioEl.play().catch((e) => {
-      if (token === this.loadToken) this.error = e instanceof Error ? e.message : String(e);
-    });
+
+    if (opts.seekTo !== undefined) {
+      const el = this.audioEl;
+      const seekTarget = opts.seekTo;
+      const onLoaded = () => {
+        el.currentTime = seekTarget;
+        el.removeEventListener("loadedmetadata", onLoaded);
+      };
+      el.addEventListener("loadedmetadata", onLoaded);
+    }
+
+    if (autoplay) {
+      this.audioEl.play().catch((e) => {
+        if (token === this.loadToken) this.error = e instanceof Error ? e.message : String(e);
+      });
+    }
   }
 
   /**
@@ -211,7 +361,13 @@ export class PlayerStore {
    * try that one instead. Bounded by MAX_AUTO_SKIPS so a queue that's all
    * unplayable doesn't recurse forever.
    */
-  private _skipUnplayable(track: Track, direction: 1 | -1, skipDepth: number, detail: string) {
+  private _skipUnplayable(
+    track: Track,
+    direction: 1 | -1,
+    skipDepth: number,
+    detail: string,
+    opts: { autoplay?: boolean } = {},
+  ) {
     this.notice = `Skipped "${track.title ?? "track"}" (${detail}).`;
 
     if (skipDepth + 1 >= PlayerStore.MAX_AUTO_SKIPS) {
@@ -224,7 +380,9 @@ export class PlayerStore {
       this.audioEl?.pause(); // nothing left to skip to in this direction
       return;
     }
-    this._loadCurrent(direction, skipDepth + 1);
+    // seekTo intentionally dropped -- a saved position only applies to the
+    // original restored track, not whatever we land on after skipping past it.
+    this._loadCurrent(direction, skipDepth + 1, opts);
   }
 
   /**
@@ -258,8 +416,25 @@ export class PlayerStore {
     return true;
   }
 
+  /**
+   * Actually loads a restored-but-deferred track (see restore()), seeking to
+   * `seconds` if given or the originally-saved position otherwise. Exposed
+   * publicly so any first interaction -- pressing play, or clicking the
+   * scrubber to a specific spot -- can trigger it, not just play.
+   */
+  loadPendingRestore(seconds?: number) {
+    if (this.pendingSeek === null || !this.audioEl || this.audioEl.src) return;
+    const seekTo = seconds ?? this.pendingSeek;
+    this.pendingSeek = null;
+    this._loadCurrent(1, 0, { seekTo });
+  }
+
   toggle() {
     if (!this.audioEl || !this.current) return;
+    if (this.pendingSeek !== null && !this.audioEl.src) {
+      this.loadPendingRestore();
+      return;
+    }
     if (this.audioEl.paused) {
       this.audioEl.play().catch((e) => (this.error = e instanceof Error ? e.message : String(e)));
     } else {
@@ -281,14 +456,18 @@ export class PlayerStore {
    * that chain actually settled.
    */
   next() {
+    this.pendingSeek = null; // moving off the restored track invalidates its pending seek
     if (!this._stepIndex(1)) return;
     this._loadCurrent(1, 0);
     this._pushHistory(this.current);
+    this._persistQueue();
   }
 
   previous() {
+    this.pendingSeek = null;
     if (!this._stepIndex(-1)) return;
     this._loadCurrent(-1, 0);
+    this._persistQueue();
   }
 
   /** Wire this to the <audio> element's `onended` event. */
@@ -313,6 +492,29 @@ export class PlayerStore {
     const next = [...this.queue];
     [next[remainingStart], next[randomIndex]] = [next[randomIndex], next[remainingStart]];
     this.queue = next;
+  }
+
+  /**
+   * Fisher-Yates shuffle of everything after the current track, done all at
+   * once (rather than lazily one slot at a time like _shuffleNextSlot) so
+   * the queue array -- the same one the "Up next" UI reads from -- reflects
+   * the real upcoming order immediately. Marks the whole shuffled range as
+   * "fixed" via shuffleFrontier, so tracks added later still get randomized
+   * into place lazily by _shuffleNextSlot when actually reached.
+   */
+  private _shuffleRemainingNow() {
+    const start = this.queueIndex + 1;
+    if (start >= this.queue.length) {
+      this.shuffleFrontier = this.queueIndex;
+      return;
+    }
+    const next = [...this.queue];
+    for (let i = next.length - 1; i > start; i--) {
+      const j = start + Math.floor(this.random() * (i - start + 1));
+      [next[i], next[j]] = [next[j], next[i]];
+    }
+    this.queue = next;
+    this.shuffleFrontier = next.length - 1;
   }
 
   private _pushHistory(track: Track | null) {

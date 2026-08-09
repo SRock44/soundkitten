@@ -112,6 +112,48 @@ describe("shuffle", () => {
     expect(seen.size).toBe(tracks.length); // every track was eventually played exactly once
   });
 
+  it("shuffles the upcoming queue immediately on toggle, not lazily on next()", () => {
+    // Deterministic random set *before* toggling, since the shuffle now
+    // happens right at toggle time rather than waiting for the first next().
+    const tracks = [1, 2, 3, 4, 5].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+    player.random = () => 0; // always swap-to-front -- a real permutation, not a no-op
+    player.toggleShuffle();
+
+    // "Up next" (player.upcoming) must differ from the original order right
+    // away -- previously it silently stayed in original order until next()
+    // was called at least once, which is exactly the reported bug.
+    const upcomingIds = player.upcoming.map((t) => t.id);
+    expect(upcomingIds).not.toEqual([2, 3, 4, 5]);
+    expect(new Set(upcomingIds)).toEqual(new Set([2, 3, 4, 5])); // still the same tracks, just reordered
+  });
+
+  it("turning shuffle back off restores the original (pre-shuffle) order", () => {
+    const tracks = [1, 2, 3, 4, 5].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+    player.random = () => 0; // guarantees a real, non-identity permutation
+    player.toggleShuffle();
+    expect(player.upcoming.map((t) => t.id)).not.toEqual([2, 3, 4, 5]); // sanity: it did shuffle
+
+    player.toggleShuffle(); // off
+    expect(player.upcoming.map((t) => t.id)).toEqual([2, 3, 4, 5]); // back to original order
+    expect(player.current!.id).toBe(1); // still on the same track
+  });
+
+  it("restores original order relative to wherever playback currently is, not just the start", () => {
+    const tracks = [1, 2, 3, 4, 5].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+    player.random = () => 0;
+    player.toggleShuffle();
+    player.next(); // now somewhere in the shuffled order, not necessarily track 2
+    const playingId = player.current!.id;
+
+    player.toggleShuffle(); // off
+    expect(player.current!.id).toBe(playingId); // still playing the same track
+    // and the full queue is back to the original 1..5 order
+    expect(player.queue.map((t) => t.id)).toEqual([1, 2, 3, 4, 5]);
+  });
+
   it("keeps previous() working after a shuffled next() (queue order is the source of truth)", () => {
     const tracks = [1, 2, 3].map((id) => makeTrack(id));
     player.play(tracks[0], tracks);
@@ -292,5 +334,85 @@ describe("shuffle and loop combined", () => {
     // one more next() should wrap back to the start of the (now-fixed) shuffled order
     player.next();
     expect(player.queueIndex).toBe(0);
+  });
+});
+
+describe("playback persistence across app restarts", () => {
+  it("restores queue, index, and position on a new store instance, without autoplaying", async () => {
+    const tracks = [makeTrack(1), makeTrack(2), makeTrack(3)];
+    player.play(tracks[0], tracks);
+    player.next(); // now on track 2
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+    audioEl.currentTime = 42;
+    player.savePositionTick(true); // force an immediate save at position 42s
+
+    const restored = new PlayerStore();
+    const fakeEl = makeFakeAudioEl();
+    restored.attach(fakeEl);
+    await restored.restore();
+
+    expect(restored.queueIndex).toBe(1);
+    expect(restored.current!.id).toBe(2);
+    expect(fakeEl.play).not.toHaveBeenCalled(); // restoring should never autoplay
+  });
+
+  it("restore() itself never touches the network -- loading is deferred to the first play", async () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    (player.audioEl as unknown as { currentTime: number }).currentTime = 30;
+    player.savePositionTick(true);
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+
+    const restored = new PlayerStore();
+    const fakeEl = makeFakeAudioEl();
+    restored.attach(fakeEl);
+    await restored.restore();
+
+    expect(fetchMock).not.toHaveBeenCalled(); // no request just from restoring
+    expect(restored.pendingSeek).not.toBeNull();
+
+    restored.toggle(); // first interaction actually loads it
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(restored.pendingSeek).toBeNull(); // consumed
+  });
+
+  it("moving off the restored track (next/previous/play) clears the pending seek", async () => {
+    const tracks = [makeTrack(1), makeTrack(2), makeTrack(3)];
+    player.play(tracks[0], tracks);
+    (player.audioEl as unknown as { currentTime: number }).currentTime = 15;
+    player.savePositionTick(true);
+
+    const restored = new PlayerStore();
+    const fakeEl = makeFakeAudioEl();
+    restored.attach(fakeEl);
+    await restored.restore();
+    expect(restored.pendingSeek).not.toBeNull();
+
+    restored.next();
+    expect(restored.pendingSeek).toBeNull();
+  });
+
+  it("does nothing when there's no saved playback state", async () => {
+    const fresh = new PlayerStore();
+    const fakeEl = makeFakeAudioEl();
+    fresh.attach(fakeEl);
+    await fresh.restore();
+    expect(fresh.queue).toEqual([]);
+    expect(fresh.queueIndex).toBe(-1);
+  });
+
+  it("clearPersistedPlayback() prevents a later restore from picking anything up", async () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    player.savePositionTick(true);
+    player.clearPersistedPlayback();
+
+    const restored = new PlayerStore();
+    const fakeEl = makeFakeAudioEl();
+    restored.attach(fakeEl);
+    await restored.restore();
+    expect(restored.queue).toEqual([]);
   });
 });

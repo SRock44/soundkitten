@@ -5,12 +5,24 @@
   import { formatDuration } from "../types";
   import type { Track } from "../types";
   import Icon from "./Icon.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
-  let { onOpenTrack, onOpenProfile }: { onOpenTrack: (t: Track) => void; onOpenProfile: (id: number) => void } = $props();
+  let {
+    onOpenTrack,
+    onOpenProfile,
+    onOpenedOnSoundCloud,
+  }: { onOpenTrack: (t: Track) => void; onOpenProfile: (id: number) => void; onOpenedOnSoundCloud?: () => void } = $props();
 
   let audioEl: HTMLAudioElement;
-  let currentTime = $state(0);
-  let duration = $state(0);
+  // Raw values from the <audio> element itself -- 0 until something's
+  // actually been fetched. A restored-but-not-yet-loaded track (see
+  // player.restore()) has no audio loaded at all, so the displayed
+  // position/duration fall back to what we already know from the track's
+  // own metadata and the saved position, without waiting on any network.
+  let liveCurrentTime = $state(0);
+  let liveDuration = $state(0);
+  let currentTime = $derived(player.pendingSeek !== null ? player.pendingSeek : liveCurrentTime);
+  let duration = $derived(liveDuration > 0 ? liveDuration : (player.current?.duration ?? 0) / 1000);
   let isPlaying = $state(false);
   let showQueue = $state(false);
   let dragIndex = $state<number | null>(null);
@@ -33,8 +45,18 @@
     likeBusy = false;
   }
 
+  // Temporary workaround while liking is blocked by SoundCloud's DataDome
+  // bot-protection (see backend commit) -- opens the track on soundcloud.com
+  // so the user can like it there instead. Remove once the block clears.
+  function openOnSoundCloud() {
+    if (!player.current?.permalink_url) return;
+    openUrl(player.current.permalink_url);
+    onOpenedOnSoundCloud?.();
+  }
+
   $effect(() => {
     player.attach(audioEl);
+    player.restore();
   });
   $effect(() => {
     player.isPlaying = isPlaying;
@@ -45,7 +67,12 @@
     const bar = e.currentTarget as HTMLElement;
     const rect = bar.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
-    audioEl.currentTime = pct * duration;
+    const target = pct * duration;
+    if (player.pendingSeek !== null && !audioEl.src) {
+      player.loadPendingRestore(target);
+      return;
+    }
+    audioEl.currentTime = target;
   }
 
   function onVolumeInput(e: Event) {
@@ -63,8 +90,12 @@
     player.toggle();
   }
 
-  function dragStart(absIndex: number) {
+  function dragStart(e: DragEvent, absIndex: number) {
     dragIndex = absIndex;
+    // Required by the HTML5 DnD spec for the drop to reliably fire, even
+    // though we only use our own dragIndex state to actually reorder.
+    e.dataTransfer?.setData("text/plain", String(absIndex));
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
   }
 
   function dragOver(e: DragEvent) {
@@ -84,10 +115,10 @@
 <div class="player-bar">
   <audio
     bind:this={audioEl}
-    ontimeupdate={() => (currentTime = audioEl.currentTime)}
-    ondurationchange={() => (duration = audioEl.duration || 0)}
+    ontimeupdate={() => { liveCurrentTime = audioEl.currentTime; player.savePositionTick(); }}
+    ondurationchange={() => (liveDuration = audioEl.duration || 0)}
     onplay={() => (isPlaying = true)}
-    onpause={() => (isPlaying = false)}
+    onpause={() => { isPlaying = false; player.savePositionTick(true); }}
     onended={() => player.onTrackEnded()}
     onerror={() => (player.error = audioEl.error?.message ?? "playback error")}
   ></audio>
@@ -111,7 +142,7 @@
             <li
               draggable="true"
               class:dragging={dragIndex === absIndex}
-              ondragstart={() => dragStart(absIndex)}
+              ondragstart={(e) => dragStart(e, absIndex)}
               ondragover={dragOver}
               ondrop={() => drop(absIndex)}
               ondragend={() => (dragIndex = null)}
@@ -185,6 +216,15 @@
         title={isLiked ? "Unlike" : "Like"}
       >
         <Icon name={isLiked ? "heart-filled" : "heart"} size={15} />
+      </button>
+      <button
+        class="cloud-btn"
+        onclick={openOnSoundCloud}
+        disabled={!player.current}
+        aria-label="Open on SoundCloud"
+        title="Open on SoundCloud"
+      >
+        <Icon name="cloud" size={15} />
       </button>
       <div class="time-display">
         <span>{formatDuration(currentTime * 1000)}</span>
@@ -437,6 +477,26 @@
 }
 
 .like-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cloud-btn {
+  display: flex;
+  align-items: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--accent);
+  padding: 0.3rem;
+  border-radius: 4px;
+}
+
+.cloud-btn:hover {
+  background: rgba(255, 85, 0, 0.15);
+}
+
+.cloud-btn:disabled {
   opacity: 0.35;
   cursor: default;
 }
