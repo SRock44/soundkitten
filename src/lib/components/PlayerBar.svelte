@@ -71,6 +71,23 @@
     player.isPlaying = isPlaying;
   });
 
+  // While the window is hidden (minimized to tray, or just backgrounded),
+  // the browser throttles background timers, including how often
+  // ontimeupdate fires -- audio playback itself keeps running unthrottled
+  // (deliberately, so background audio doesn't cut out), but the displayed
+  // position can silently fall behind and stay stuck until a throttled
+  // update eventually lands. Force a resync the moment the page is visible
+  // again instead of waiting on that.
+  $effect(() => {
+    function resync() {
+      if (document.visibilityState !== "visible" || !audioEl) return;
+      liveCurrentTime = audioEl.currentTime;
+      if (audioEl.duration) liveDuration = audioEl.duration;
+    }
+    document.addEventListener("visibilitychange", resync);
+    return () => document.removeEventListener("visibilitychange", resync);
+  });
+
   function seek(e: MouseEvent) {
     if (!duration) return;
     const bar = e.currentTarget as HTMLElement;
