@@ -6,9 +6,40 @@ on:
       - "v*.*.*"
 
 jobs:
-  release:
+  # Creates the draft release once, up front. Without this, each of the 4
+  # matrix build jobs below would independently try to "find or create" the
+  # same release for the same tag at roughly the same moment -- a race that
+  # showed up live as a flaky "Request body length does not match
+  # content-length header" error creating the release. This is the pattern
+  # Tauri's own CI docs recommend for exactly this reason.
+  create-release:
     permissions:
-      contents: write # needed to create/upload to the draft GitHub release -- the actual cause of the last failed run ("Resource not accessible by integration"), not the signing step, which succeeded fine
+      contents: write
+    runs-on: ubuntu-22.04
+    outputs:
+      release_id: ${{ steps.create-release.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create release
+        id: create-release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: context.ref.replace('refs/tags/', ''),
+              name: `SoundKitten ${context.ref.replace('refs/tags/', '')}`,
+              body: 'See the changelog for details.',
+              draft: true,
+              prerelease: true,
+            });
+            return data.id;
+
+  build:
+    needs: create-release
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -54,10 +85,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "SoundKitten ${{ github.ref_name }}"
-          releaseBody: "See the changelog for details."
-          releaseDraft: true
-          prerelease: true
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           includeUpdaterJson: true
           args: ${{ matrix.args }}
