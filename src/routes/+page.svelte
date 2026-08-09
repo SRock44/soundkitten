@@ -326,6 +326,14 @@
     authStatus = event.payload.ok ? "" : `Login failed: ${event.payload.error ?? "unknown error"}`;
     await refreshAuth();
   });
+  // Fires once the auto-chained official OAuth connect (right after
+  // primary login) finishes in the background. Without this, a successful
+  // onboarding connect would go unnoticed by the frontend until the app
+  // was relaunched, so the very first like or follow would prompt again
+  // for no reason.
+  listen<boolean>("official_auth:result", (event) => {
+    officialAuth.connected = event.payload;
+  });
 </script>
 
 <div class="window">

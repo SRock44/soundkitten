@@ -12,10 +12,12 @@
 //!
 //! Instead: primary login stays exactly as it always was (proven), and on
 //! success, automatically kicks off official_oauth::start_official_login
-//! (also proven, used standalone for the lazy-connect case) in the system
-//! browser right after, so it reads as one continuous onboarding moment
-//! instead of a separately-discovered "connect" action later, without
-//! touching either proven mechanism.
+//! (an embedded popup window, see that module) right after, so it reads as
+//! one continuous onboarding moment instead of a separately-discovered
+//! "connect" action later, without touching primary login's own mechanism.
+//! Its outcome is reported via `official_auth:result` so the frontend
+//! knows immediately whether it's actually connected, rather than only
+//! finding out the next time it happens to check.
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
@@ -111,15 +113,21 @@ pub async fn start_login(app: AppHandle) -> Result<(), String> {
                     close_login_window(&app_for_poll);
 
                     // Primary login just succeeded. Automatically continue
-                    // into the official OAuth consent screen in the
-                    // system browser right away, best-effort, so the user
-                    // encounters it as part of one onboarding moment
-                    // instead of separately discovering it later on first
-                    // like or follow. Doesn't affect primary login, which
-                    // already reported success above either way.
+                    // into the official OAuth connect popup right away,
+                    // best-effort, so the user encounters it as part of one
+                    // onboarding moment instead of separately discovering
+                    // it later on first like or follow. Doesn't affect
+                    // primary login, which already reported success above
+                    // either way. The frontend's officialAuth store listens
+                    // for this event to update its connected state right
+                    // away, instead of only learning about it on next
+                    // launch -- without this, a successful onboarding
+                    // connect would still prompt again on the very first
+                    // like or follow.
                     let app_for_official = app_for_poll.clone();
                     tauri::async_runtime::spawn(async move {
-                        let _ = official_oauth::start_official_login(app_for_official).await;
+                        let ok = official_oauth::start_official_login(app_for_official.clone()).await.is_ok();
+                        let _ = app_for_official.emit("official_auth:result", ok);
                     });
                     return;
                 }

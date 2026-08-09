@@ -10,7 +10,9 @@
 //! services/oauth-proxy/), which is the only place client_secret exists.
 
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -116,38 +118,59 @@ fn build_authorize_url(challenge: &str, state: &str, redirect_uri: &str) -> anyh
     )?)
 }
 
-/// Blocks the current (spawned) thread waiting for the one OAuth redirect.
-/// Runs off the async runtime via spawn_blocking, mirroring the pattern
-/// tools/sc-probe/src/oauth.rs already proved works for this exact flow.
-fn wait_for_redirect(port: u16, expected_state: &str) -> anyhow::Result<String> {
-    let server = tiny_http::Server::http(format!("127.0.0.1:{port}"))
-        .map_err(|e| anyhow::anyhow!("failed to bind loopback listener on {port}: {e}"))?;
+fn bind_loopback_listener(port: u16) -> anyhow::Result<tiny_http::Server> {
+    tiny_http::Server::http(format!("127.0.0.1:{port}")).map_err(|e| anyhow::anyhow!("failed to bind loopback listener on {port}: {e}"))
+}
 
-    let request = server
-        .recv_timeout(Duration::from_secs(180))?
-        .ok_or_else(|| anyhow::anyhow!("timed out waiting for OAuth redirect (180s)"))?;
+/// Blocks the current (spawned) thread waiting for the one OAuth redirect,
+/// polling in short increments rather than one long recv_timeout so it can
+/// notice `cancelled` promptly. This matters: if the caller gives up on
+/// this listener (e.g. the popup window was closed before a redirect
+/// arrived) without a way to interrupt an in-progress wait, the OS thread
+/// spawn_blocking runs this on keeps the port bound regardless -- dropping
+/// a spawn_blocking JoinHandle does NOT cancel the underlying thread, only
+/// detaches it. A leaked listener here means the NEXT connect attempt
+/// either fails to bind port 8765 at all, or worse, its real redirect gets
+/// delivered to this stale, orphaned listener instead (which then rejects
+/// it for a state mismatch), while the new attempt just hangs until its
+/// own timeout. Both were reproduced live before this fix.
+fn wait_for_redirect(server: &tiny_http::Server, expected_state: &str, cancelled: &AtomicBool) -> anyhow::Result<String> {
+    let deadline = Instant::now() + Duration::from_secs(180);
+    loop {
+        if cancelled.load(Ordering::Relaxed) {
+            anyhow::bail!("cancelled");
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for OAuth redirect (180s)");
+        }
 
-    let url = format!("http://127.0.0.1:{port}{}", request.url());
-    let parsed = url::Url::parse(&url)?;
-    let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
+        let request = match server.recv_timeout(Duration::from_millis(400))? {
+            Some(r) => r,
+            None => continue, // this 400ms slice elapsed with nothing incoming, recheck cancelled/deadline
+        };
 
-    let response_html = if params.contains_key("code") {
-        "<html><body>Connected -- you can close this tab and return to SoundKitten.</body></html>"
-    } else {
-        "<html><body>Login failed or was denied -- check SoundKitten and try again.</body></html>"
-    };
-    let response = tiny_http::Response::from_string(response_html)
-        .with_header("Content-Type: text/html".parse::<tiny_http::Header>().unwrap());
-    let _ = request.respond(response);
+        let url = format!("http://127.0.0.1{}", request.url());
+        let parsed = url::Url::parse(&url)?;
+        let params: std::collections::HashMap<_, _> = parsed.query_pairs().into_owned().collect();
 
-    if let Some(err) = params.get("error") {
-        anyhow::bail!("SoundCloud returned an OAuth error: {err}");
+        let response_html = if params.contains_key("code") {
+            "<html><body>Connected -- you can close this tab and return to SoundKitten.</body></html>"
+        } else {
+            "<html><body>Login failed or was denied -- check SoundKitten and try again.</body></html>"
+        };
+        let response = tiny_http::Response::from_string(response_html)
+            .with_header("Content-Type: text/html".parse::<tiny_http::Header>().unwrap());
+        let _ = request.respond(response);
+
+        if let Some(err) = params.get("error") {
+            anyhow::bail!("SoundCloud returned an OAuth error: {err}");
+        }
+        let state = params.get("state").ok_or_else(|| anyhow::anyhow!("redirect missing state param"))?;
+        if state != expected_state {
+            anyhow::bail!("state mismatch, possible CSRF or stale redirect");
+        }
+        return params.get("code").cloned().ok_or_else(|| anyhow::anyhow!("redirect missing code param"));
     }
-    let state = params.get("state").ok_or_else(|| anyhow::anyhow!("redirect missing state param"))?;
-    if state != expected_state {
-        anyhow::bail!("state mismatch, possible CSRF or stale redirect");
-    }
-    params.get("code").cloned().ok_or_else(|| anyhow::anyhow!("redirect missing code param"))
 }
 
 async fn exchange_code_via_proxy(code: &str, verifier: &str, redirect_uri: &str) -> anyhow::Result<StoredTokens> {
@@ -240,10 +263,17 @@ pub async fn start_official_login(app: AppHandle) -> Result<(), String> {
     let redirect_uri = redirect_uri();
     let auth_url = build_authorize_url(&challenge, &state, &redirect_uri).map_err(|e| e.to_string())?;
 
-    // Bind the listener BEFORE opening the window so the redirect always
-    // has somewhere to land.
+    // Bind the listener here (fast, non-blocking) rather than inside the
+    // spawned thread, so this Arc can also be handed to the cancellation
+    // path below -- see wait_for_redirect's doc comment for why that
+    // matters.
+    let server = Arc::new(bind_loopback_listener(REDIRECT_PORT).map_err(|e| e.to_string())?);
+    let cancelled = Arc::new(AtomicBool::new(false));
+
+    let server_for_wait = server.clone();
+    let cancelled_for_wait = cancelled.clone();
     let state_for_wait = state.clone();
-    let wait_handle = tauri::async_runtime::spawn_blocking(move || wait_for_redirect(REDIRECT_PORT, &state_for_wait));
+    let wait_handle = tauri::async_runtime::spawn_blocking(move || wait_for_redirect(&server_for_wait, &state_for_wait, &cancelled_for_wait));
 
     let _window = WebviewWindowBuilder::new(&app, OFFICIAL_LOGIN_WINDOW_LABEL, WebviewUrl::External(auth_url.as_str().parse().map_err(|e| format!("{e}"))?))
         .title("Connect to SoundCloud")
@@ -265,7 +295,12 @@ pub async fn start_official_login(app: AppHandle) -> Result<(), String> {
     };
     let redirect_result = tokio::select! {
         r = wait_handle => Some(r),
-        _ = window_closed => None,
+        _ = window_closed => {
+            // Tell the still-running blocking thread to give up within its
+            // next ~400ms poll instead of holding port 8765 for up to 180s.
+            cancelled.store(true, Ordering::Relaxed);
+            None
+        }
     };
 
     // Auto-close: the user shouldn't have to close this themselves once
