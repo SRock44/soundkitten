@@ -215,7 +215,7 @@ pub struct Playlist {
 /// SoundCloud's generated/algorithmic sets ("Your Mix N", "Related tracks:
 /// ...", weekly mood mixes, etc), as returned inside `/mixed-selections`.
 /// These are NOT real playlists -- their `id` is a string urn like
-/// `soundcloud:system-playlists:your-moods:255334580:1`, not an integer, and
+/// `soundcloud:system-playlists:your-moods:{userId}:1`, not an integer, and
 /// there is no `/playlists/{id}` resource for them (confirmed live: that
 /// 404s). Their `tracks` array only contains id stubs, not full track data,
 /// so hydrating one requires a separate batch `/tracks?ids=...` call.

@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest something new or an improvement to an existing feature
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that the app doesn't support well today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to see?
+      description: Your ideal solution, if you have one in mind. Rough is fine.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any other approaches, or workarounds you're using today.
+
+  - type: markdown
+    attributes:
+      value: |
+        A couple of things are intentionally out of scope regardless of interest — see [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-boundaries):
+        - Download/export of audio files (SoundCloud's API Terms of Use)
+        - DRM circumvention (not technically possible without a licensed CDM)
