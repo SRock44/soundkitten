@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod official_oauth;
 pub mod playback;
 pub mod soundcloud;
 
@@ -44,6 +45,15 @@ pub fn run() {
             soundcloud::commands::sc_playlist,
             soundcloud::commands::sc_mixed_selections,
             soundcloud::commands::sc_system_playlist_tracks,
+            official_oauth::start_official_login,
+            official_oauth::is_official_connected,
+            official_oauth::disconnect_official_login,
+            official_oauth::sc_like_track_v2,
+            official_oauth::sc_unlike_track_v2,
+            official_oauth::sc_like_playlist_v2,
+            official_oauth::sc_unlike_playlist_v2,
+            official_oauth::sc_follow_user_v2,
+            official_oauth::sc_unfollow_user_v2,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
