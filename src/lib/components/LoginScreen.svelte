@@ -1,7 +1,16 @@
 <script lang="ts">
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import WindowControls from "./WindowControls.svelte";
 
   let { onLogin, status }: { onLogin: () => void; status: string } = $props();
+
+  let agreed = $state(false);
+
+  function link(e: MouseEvent, url: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    openUrl(url);
+  }
 </script>
 
 <div class="page">
@@ -13,10 +22,21 @@
     <img src="/logo.png" alt="" class="logo" />
     <h1>SoundKitten</h1>
     <p class="subtitle">An unofficial, open-source, streaming-only client for SoundCloud.</p>
-    <button class="login-btn" onclick={onLogin}>Log in with SoundCloud</button>
+
+    <label class="agree">
+      <input type="checkbox" bind:checked={agreed} />
+      <span>
+        I agree to the <a href="https://soundkitten.org/terms" onclick={(e) => link(e, "https://soundkitten.org/terms")}>Terms</a>
+        and <a href="https://soundkitten.org/privacy" onclick={(e) => link(e, "https://soundkitten.org/privacy")}>Privacy Policy</a>.
+        SoundKitten isn't affiliated with SoundCloud, and doesn't collect or share your data.
+      </span>
+    </label>
+
+    <button class="login-btn" onclick={onLogin} disabled={!agreed}>Log in with SoundCloud</button>
     {#if status}
       <p class="status">{status}</p>
     {/if}
+    <a class="site-link" href="https://soundkitten.org" onclick={(e) => link(e, "https://soundkitten.org")}>soundkitten.org</a>
   </div>
 </div>
 
@@ -73,8 +93,51 @@
   background: var(--accent-hover);
 }
 
+.login-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.agree {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 22rem;
+  margin-top: 0.75rem;
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agree input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.agree a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.agree a:hover {
+  color: var(--accent);
+}
+
 .status {
   color: var(--muted);
   max-width: 24rem;
+}
+
+.site-link {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+.site-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 </style>
