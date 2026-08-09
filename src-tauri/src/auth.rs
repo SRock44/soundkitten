@@ -80,7 +80,17 @@ pub async fn start_login(app: AppHandle) -> Result<(), String> {
     let app_for_poll = app.clone();
     tauri::async_runtime::spawn(async move {
         let deadline = Instant::now() + Duration::from_secs(300);
-        let sc_url: url::Url = "https://soundcloud.com".parse().unwrap();
+        // The login form now renders on secure.soundcloud.com/authorize
+        // instead of soundcloud.com/login, and the oauth_token cookie it
+        // sets may be scoped (host-only, no leading dot) to whichever
+        // origin actually handled the login step rather than the apex
+        // domain -- checking only "soundcloud.com" missed it entirely in
+        // testing. Check every plausible origin each poll instead of
+        // guessing one.
+        let candidate_urls: Vec<url::Url> = ["https://soundcloud.com", "https://secure.soundcloud.com", "https://www.soundcloud.com"]
+            .iter()
+            .map(|u| u.parse().unwrap())
+            .collect();
 
         // Phase 1, required: wait for the oauth_token cookie. Playback and
         // browsing depend on this; the official side (phase 2) is a bonus.
@@ -99,17 +109,20 @@ pub async fn start_login(app: AppHandle) -> Result<(), String> {
 
             // cookies() can deadlock if called synchronously on some platforms;
             // we're already off the main thread here via async_runtime::spawn.
-            let cookies_result = win.cookies_for_url(sc_url.clone());
-            if let Ok(cookies) = cookies_result {
-                if let Some(token_cookie) = cookies.iter().find(|c| c.name() == "oauth_token") {
-                    let token = token_cookie.value().to_string();
-                    if let Err(e) = store_token(&token) {
-                        emit_result(&app_for_poll, false, Some(format!("failed to store token: {e}")));
-                        close_login_window(&app_for_poll);
-                        return;
-                    }
-                    break;
+            let found = candidate_urls.iter().find_map(|u| {
+                win.cookies_for_url(u.clone())
+                    .ok()?
+                    .into_iter()
+                    .find(|c| c.name() == "oauth_token")
+                    .map(|c| c.value().to_string())
+            });
+            if let Some(token) = found {
+                if let Err(e) = store_token(&token) {
+                    emit_result(&app_for_poll, false, Some(format!("failed to store token: {e}")));
+                    close_login_window(&app_for_poll);
+                    return;
                 }
+                break;
             }
 
             tokio::time::sleep(Duration::from_millis(750)).await;
