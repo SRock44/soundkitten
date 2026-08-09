@@ -5,7 +5,7 @@
   import { officialAuth } from "../stores/officialAuth.svelte";
   import Icon from "./Icon.svelte";
 
-  let { userId, permalinkUrl }: { userId: number; permalinkUrl: string | null } = $props();
+  let { userId, permalinkUrl, compact = false }: { userId: number; permalinkUrl: string | null; compact?: boolean } = $props();
 
   let isFollowing = $derived(following.has(userId));
   let busy = $state(false);
@@ -40,13 +40,15 @@
 
 <button
   class="follow-btn"
+  class:compact
   class:following={isFollowing}
   onclick={toggleFollow}
   disabled={busy || (!permalinkUrl && !officialAuth.connected)}
+  aria-label={isFollowing ? "Unfollow" : "Follow"}
   title={isFollowing ? "Unfollow" : "Follow"}
 >
-  <Icon name={isFollowing ? "user-filled" : "user"} size={14} />
-  <span>{isFollowing ? "Following" : "Follow"}</span>
+  <Icon name={isFollowing ? "user-filled" : "user"} size={compact ? 15 : 14} />
+  {#if !compact}<span>{isFollowing ? "Following" : "Follow"}</span>{/if}
 </button>
 
 <style>
@@ -84,5 +86,27 @@
 .follow-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.follow-btn.compact {
+  padding: 0.3rem;
+  border: none;
+  border-radius: 4px;
+  color: #a0a0a0;
+}
+
+.follow-btn.compact:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: transparent;
+}
+
+.follow-btn.compact.following {
+  background: none;
+  color: var(--accent);
+}
+
+.follow-btn.compact.following:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 </style>

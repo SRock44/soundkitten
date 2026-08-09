@@ -29,6 +29,11 @@ const REDIRECT_PORT: u16 = 8765;
 const KEYRING_SERVICE: &str = "com.soundkitten.app.official";
 const KEYRING_USER: &str = "official_oauth_tokens";
 
+// Abuse deterrent for the proxy, not a real secret (see
+// services/oauth-proxy/, comment there explains why this one is fine to
+// ship in the binary, unlike SC_CLIENT_SECRET, which never appears here).
+const PROXY_ACCESS_KEY: &str = "737719365c6ab79840724fe0375f70bb61f3556f0fbb980e";
+
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) soundcloud-desktop/0.1")
@@ -130,6 +135,7 @@ async fn exchange_code_via_proxy(code: &str, verifier: &str, redirect_uri: &str)
     let client = http_client();
     let resp = client
         .post(format!("{PROXY_BASE}/token/exchange"))
+        .header("x-soundkitten-key", PROXY_ACCESS_KEY)
         .json(&serde_json::json!({
             "code": code,
             "code_verifier": verifier,
@@ -144,6 +150,7 @@ async fn refresh_via_proxy(refresh_token: &str) -> anyhow::Result<StoredTokens> 
     let client = http_client();
     let resp = client
         .post(format!("{PROXY_BASE}/token/refresh"))
+        .header("x-soundkitten-key", PROXY_ACCESS_KEY)
         .json(&serde_json::json!({ "refresh_token": refresh_token }))
         .send()
         .await?;

@@ -6,6 +6,7 @@
   import { formatDuration } from "../types";
   import type { Track } from "../types";
   import Icon from "./Icon.svelte";
+  import FollowButton from "./FollowButton.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
   let {
@@ -225,6 +226,9 @@
       >
         <Icon name={isLiked ? "heart-filled" : "heart"} size={15} />
       </button>
+      {#if player.current?.user}
+        <FollowButton userId={player.current.user.id} permalinkUrl={player.current.user.permalink_url} compact />
+      {/if}
       <button
         class="cloud-btn"
         onclick={openOnSoundCloud}
