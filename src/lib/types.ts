@@ -74,6 +74,7 @@ export type Profile = {
   followers_count: number | null;
   followings_count: number | null;
   track_count: number | null;
+  likes_count: number | null;
   visuals: { visuals: { visual_url: string | null }[] } | null;
 };
 

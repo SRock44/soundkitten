@@ -4,6 +4,8 @@
   import { isSystemPlaylist, selectionArtwork, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
   import Icon from "./Icon.svelte";
+  import { delay, syncWithCache } from "../localCache";
+  import { syncStatus } from "../stores/syncStatus.svelte";
 
   let {
     me,
@@ -39,17 +41,30 @@
   let selections = $state<Selection[]>([]);
   let selectionsLoading = $state(true);
 
-  api
-    .feed()
-    .then((f) => (feed = f))
-    .catch((e) => (feedError = `Failed to load feed: ${e}`))
-    .finally(() => (feedLoading = false));
+  // Cache-first, and staggered relative to each other -- these used to both
+  // fire immediately on every mount (i.e. every login and every "Home" nav),
+  // on top of the app-level likes/playlists/me/followings burst, which is
+  // exactly the kind of concurrent request pile-up that got the account
+  // rate-limited. A warm cache means most of the time neither of these
+  // touches the network at all.
+  (async () => {
+    await syncWithCache("feed", () => api.feed(), (v) => (feed = v), {
+      onRateLimited: () => syncStatus.rateLimited(),
+      onError: (e) => (feedError = `Failed to load feed: ${e}`),
+    });
+    feedLoading = false;
+  })();
 
-  api
-    .mixedSelections()
-    .then((s) => (selections = s.filter((sel) => sel.items.collection.length > 0)))
-    .catch((e) => console.error("failed to load mixed selections", e))
-    .finally(() => (selectionsLoading = false));
+  (async () => {
+    await delay(500);
+    await syncWithCache(
+      "mixedSelections",
+      () => api.mixedSelections(),
+      (v) => (selections = v.filter((sel) => sel.items.collection.length > 0)),
+      { onRateLimited: () => syncStatus.rateLimited() },
+    );
+    selectionsLoading = false;
+  })();
 </script>
 
 <div class="home">
@@ -110,7 +125,7 @@
         {#each playlists.slice(0, 6) as p}
           <button class="playlist-card" onclick={() => onOpenPlaylist(p)}>
             {#if p.artwork_url}
-              <img src={p.artwork_url} alt="" />
+              <img src={p.artwork_url} alt="" loading="lazy" />
             {:else}
               <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
             {/if}
@@ -129,7 +144,7 @@
           {#each sel.items.collection as p}
             <button class="playlist-card" onclick={() => openSelectionItem(p)}>
               {#if selectionArtwork(p)}
-                <img src={selectionArtwork(p)} alt="" />
+                <img src={selectionArtwork(p)} alt="" loading="lazy" />
               {:else}
                 <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
               {/if}

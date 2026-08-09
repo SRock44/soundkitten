@@ -1,6 +1,7 @@
 <script lang="ts">
   import "@fontsource-variable/archivo";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import { api } from "$lib/api";
   import LoginScreen from "$lib/components/LoginScreen.svelte";
   import TopNav from "$lib/components/TopNav.svelte";
@@ -10,8 +11,13 @@
   import Home from "$lib/components/Home.svelte";
   import TrackDetail from "$lib/components/TrackDetail.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import SyncStatusBar from "$lib/components/SyncStatusBar.svelte";
   import { likes as likesStore } from "$lib/stores/likes.svelte";
   import { following as followingStore } from "$lib/stores/following.svelte";
+  import { player } from "$lib/stores/player.svelte";
+  import { syncStatus } from "$lib/stores/syncStatus.svelte";
+  import { checkForUpdates } from "$lib/updater";
+  import { clearCached, delay, loadCached, saveCached, syncWithCache } from "$lib/localCache";
   import type { Playlist, Profile, SystemPlaylist, Track } from "$lib/types";
 
   type AuthEvent = { ok: boolean; error: string | null };
@@ -24,7 +30,6 @@
   let me = $state<Profile | null>(null);
 
   let view = $state<View>("home");
-  let playlistReturnView = $state<View>("home");
   let searchQuery = $state("");
   let searchTab = $state<"tracks" | "people">("tracks");
   let searchResults = $state<Track[]>([]);
@@ -38,8 +43,38 @@
   let loading = $state(false);
   let loadError = $state("");
 
+  /**
+   * A universal back button needs to remember every screen the user has
+   * visited (not just "playlist detail -> wherever you opened it from",
+   * which is all the old playlistReturnView tracked), so this snapshots the
+   * handful of state vars that together define "what's on screen" before
+   * each navigation, and goBack() restores the most recent one.
+   */
+  type NavSnapshot = { view: View; selectedTrack: Track | null; profileUserId: number | null; openPlaylist: Playlist | null };
+  let navHistory = $state<NavSnapshot[]>([]);
+  let canGoBack = $derived(navHistory.length > 0);
+
+  function pushHistory() {
+    navHistory = [...navHistory, { view, selectedTrack, profileUserId, openPlaylist }];
+  }
+
+  function goBack() {
+    if (navHistory.length === 0) return;
+    const prev = navHistory[navHistory.length - 1];
+    navHistory = navHistory.slice(0, -1);
+    view = prev.view;
+    selectedTrack = prev.selectedTrack;
+    profileUserId = prev.profileUserId;
+    openPlaylist = prev.openPlaylist;
+  }
+
+  function openTrack(t: Track) {
+    pushHistory();
+    selectedTrack = t;
+  }
+
   async function viewPlaylist(p: Playlist) {
-    if (view !== "playlists") playlistReturnView = view;
+    pushHistory();
     view = "playlists";
     openPlaylist = p;
     loadError = "";
@@ -56,7 +91,7 @@
   }
 
   async function viewSystemPlaylist(sp: SystemPlaylist) {
-    if (view !== "playlists") playlistReturnView = view;
+    pushHistory();
     view = "playlists";
     const shell: Playlist = {
       id: -1,
@@ -81,33 +116,125 @@
     openPlaylistLoading = false;
   }
 
+  /**
+   * Every cold launch used to fire likes/playlists/me/followings/mixed-
+   * selections/feed all at once, concurrently, with nothing cached locally
+   * -- meaning that same burst repeated on literally every single launch.
+   * That's what got the account rate-limited (429) repeatedly. Now: hydrate
+   * instantly from whatever's cached (no network wait at all), then run a
+   * background refresh that's sequential and spaced out rather than a
+   * concurrent burst, and only actually hits the network when the cache is
+   * missing or stale.
+   */
   async function refreshAuth() {
     loggedIn = await api.isLoggedIn();
     authChecked = true;
-    if (loggedIn) {
-      navigate(view);
-      api.me().then((p) => (me = p)).catch(() => {});
-      api.myFollowingsIds().then((ids) => followingStore.seed(ids)).catch(() => {});
+    if (!loggedIn) return;
+
+    const cachedMe = loadCached<Profile>("me");
+    if (cachedMe) me = cachedMe.value;
+    const cachedFollowingIds = loadCached<number[]>("followingIds");
+    if (cachedFollowingIds) followingStore.seed(cachedFollowingIds.value);
+
+    await navigate(view); // sequential internally -- see ensureLikesLoaded/ensurePlaylistsLoaded
+
+    syncStatus.syncing();
+    await syncWithCache("me", () => api.me(), (v) => (me = v), { onRateLimited: () => syncStatus.rateLimited() });
+    await delay(400);
+    await syncWithCache("followingIds", () => api.myFollowingsIds(), (v) => followingStore.seed(v), {
+      onRateLimited: () => syncStatus.rateLimited(),
+    });
+    syncStatus.done();
+  }
+
+  async function ensureLikesLoaded(force = false) {
+    await syncWithCache("likes", () => api.likes(), (v) => { likes = v; likesStore.seed(v.map((t) => t.id)); }, {
+      maxAgeMs: force ? 0 : 5 * 60 * 1000,
+      onRateLimited: () => syncStatus.rateLimited(),
+      onError: (e) => (loadError = `Failed to load likes: ${e}`),
+    });
+  }
+
+  let lastLikesSyncAt = 0;
+
+  /**
+   * Likes made outside the app (e.g. via the DRM/DataDome-blocked-like
+   * fallback that opens a track on soundcloud.com) never touch our store.
+   * Rather than polling the full, paginated likes list on a timer, this
+   * checks the cheap `likes_count` on `/me` first and only re-fetches the
+   * whole list when that number actually moved. Throttled to at most once
+   * per 10s since it can be triggered by both a window-focus event and a
+   * timer in quick succession.
+   */
+  async function syncLikesIfChanged() {
+    if (Date.now() - lastLikesSyncAt < 10_000) return;
+    lastLikesSyncAt = Date.now();
+    try {
+      const fresh = await api.me();
+      const changed = me?.likes_count !== fresh.likes_count;
+      me = fresh;
+      saveCached("me", fresh);
+      if (changed) {
+        likes = await api.likes();
+        likesStore.seed(likes.map((t) => t.id));
+        saveCached("likes", likes);
+      }
+    } catch {
+      // silent -- this is a background sync, not a user-initiated action
     }
   }
 
-  async function ensureLikesLoaded() {
-    if (likes.length > 0) return;
+  /** Called when the player bar's "open on SoundCloud" fallback is used, as
+   * a fallback in case the window-focus listener below doesn't fire (e.g.
+   * the browser opened on a different monitor without an OS focus change). */
+  function scheduleLikesSyncCheck() {
+    setTimeout(syncLikesIfChanged, 25_000);
+  }
+
+  let refreshing = $state(false);
+  // Profile and TrackDetail fetch their own data in an $effect keyed off
+  // their id prop, so there's nothing to re-invoke from here directly --
+  // bumping one of these and using it as part of a {#key} block forces a
+  // remount, which re-runs that effect.
+  let profileRefreshKey = $state(0);
+  let trackDetailRefreshKey = $state(0);
+
+  /** Force-refetches whatever's currently on screen. */
+  async function refreshCurrent() {
+    if (refreshing) return;
+    refreshing = true;
     try {
-      likes = await api.likes();
-      likesStore.seed(likes.map((t) => t.id));
-    } catch (e) {
-      loadError = `Failed to load likes: ${e}`;
+      if (selectedTrack) {
+        trackDetailRefreshKey += 1;
+      } else if (view === "profile" && profileUserId !== null) {
+        profileRefreshKey += 1;
+      } else if (view === "home") {
+        await Promise.all([ensureLikesLoaded(true), ensurePlaylistsLoaded(true)]);
+      } else if (view === "likes") {
+        await ensureLikesLoaded(true);
+      } else if (view === "playlists") {
+        if (openPlaylist && openPlaylist.id !== -1) {
+          openPlaylist = await api.playlist(openPlaylist.id);
+        } else if (!openPlaylist) {
+          await ensurePlaylistsLoaded(true);
+        }
+        // system playlists (id === -1) aren't re-fetchable without their
+        // original track-id list, which we don't retain after hydrating --
+        // an acceptable gap for what SoundCloud presents as a fairly static mix
+      } else if (view === "search" && searchQuery.trim()) {
+        await runSearch();
+      }
+    } finally {
+      refreshing = false;
     }
   }
 
-  async function ensurePlaylistsLoaded() {
-    if (playlists.length > 0) return;
-    try {
-      playlists = await api.playlists();
-    } catch (e) {
-      loadError = `Failed to load playlists: ${e}`;
-    }
+  async function ensurePlaylistsLoaded(force = false) {
+    await syncWithCache("playlists", () => api.playlists(), (v) => (playlists = v), {
+      maxAgeMs: force ? 0 : 5 * 60 * 1000,
+      onRateLimited: () => syncStatus.rateLimited(),
+      onError: (e) => (loadError = `Failed to load playlists: ${e}`),
+    });
   }
 
   async function onLogin() {
@@ -142,21 +269,31 @@
     openPlaylist = null;
     me = null;
     view = "home";
+    navHistory = [];
+    player.clearPersistedPlayback();
+    for (const key of ["likes", "playlists", "me", "followingIds", "feed", "mixedSelections"]) clearCached(key);
   }
 
   function openProfile(userId: number) {
+    pushHistory();
     profileUserId = userId;
     view = "profile";
   }
 
   async function navigate(v: View) {
+    // guarded (not unconditional) since refreshAuth() calls navigate(view) with
+    // the *current* view on startup, purely to trigger the loading below --
+    // that shouldn't also push a redundant "go back to the exact same place" entry
+    if (v !== view) pushHistory();
     view = v;
     openPlaylist = null;
     if (v !== "profile") profileUserId = null;
     loadError = "";
     if (v === "home") {
       loading = likes.length === 0 && playlists.length === 0;
-      await Promise.all([ensureLikesLoaded(), ensurePlaylistsLoaded()]);
+      // sequential, not Promise.all -- see refreshAuth's comment on why
+      await ensureLikesLoaded();
+      await ensurePlaylistsLoaded();
       loading = false;
     } else if (v === "likes") {
       loading = likes.length === 0;
@@ -192,6 +329,10 @@
   }
 
   refreshAuth();
+  checkForUpdates();
+  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+    if (focused) syncLikesIfChanged();
+  });
   listen<AuthEvent>("auth:result", async (event) => {
     if (event.payload.ok) {
       authStatus = "";
@@ -220,13 +361,19 @@
       onSearch={runSearch}
       {me}
       onOpenOwnProfile={() => me && openProfile(me.id)}
+      {canGoBack}
+      onBack={goBack}
+      onRefresh={refreshCurrent}
+      {refreshing}
     />
 
     <main>
       {#if selectedTrack}
-        <TrackDetail track={selectedTrack} onBack={() => (selectedTrack = null)} onOpenProfile={(id) => { selectedTrack = null; openProfile(id); }} />
+        {#key trackDetailRefreshKey}
+          <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} />
+        {/key}
       {:else if view === "home"}
-        <Home {me} {likes} {playlists} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
+        <Home {me} {likes} {playlists} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
       {:else if view === "search"}
         <div class="search-tabs">
           <button class:active={searchTab === "tracks"} onclick={() => switchSearchTab("tracks")}>Tracks</button>
@@ -241,7 +388,7 @@
             <p class="muted">Search for tracks to get started.</p>
           {:else}
             <div class="list">
-              {#each searchResults as t, i}<TrackRow track={t} queue={searchResults} index={i} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} />{/each}
+              {#each searchResults as t, i}<TrackRow track={t} queue={searchResults} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
             </div>
           {/if}
         {:else if peopleResults.length === 0}
@@ -251,7 +398,7 @@
             {#each peopleResults as p}
               <button class="person-card" onclick={() => openProfile(p.id)}>
                 {#if p.avatar_url}
-                  <img src={p.avatar_url} alt="" />
+                  <img src={p.avatar_url} alt="" loading="lazy" />
                 {:else}
                   <div class="person-avatar-fallback">{(p.username ?? "?")[0]?.toUpperCase()}</div>
                 {/if}
@@ -270,12 +417,12 @@
           <p class="muted">No likes found.</p>
         {:else}
           <div class="list">
-            {#each likes as t, i}<TrackRow track={t} queue={likes} index={i} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} />{/each}
+            {#each likes as t, i}<TrackRow track={t} queue={likes} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
           </div>
         {/if}
       {:else if view === "playlists"}
         {#if openPlaylist}
-          <button class="back" onclick={() => navigate(playlistReturnView)}><Icon name="arrow-left" size={14} /> Back</button>
+          <button class="back" onclick={goBack}><Icon name="arrow-left" size={14} /> Back</button>
           <h1>{openPlaylist.title ?? "Untitled playlist"}</h1>
           {#if openPlaylistLoading}
             <p class="muted">Loading tracks...</p>
@@ -285,7 +432,7 @@
             <p class="muted">This playlist has no tracks.</p>
           {:else}
             <div class="list">
-              {#each openPlaylist.tracks as t, i}<TrackRow track={t} queue={openPlaylist.tracks} index={i} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} />{/each}
+              {#each openPlaylist.tracks as t, i}<TrackRow track={t} queue={openPlaylist.tracks} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
             </div>
           {/if}
         {:else}
@@ -301,7 +448,7 @@
               {#each playlists as p}
                 <button class="playlist-card" onclick={() => viewPlaylist(p)}>
                   {#if p.artwork_url}
-                    <img src={p.artwork_url} alt="" />
+                    <img src={p.artwork_url} alt="" loading="lazy" />
                   {:else}
                     <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
                   {/if}
@@ -313,11 +460,14 @@
           {/if}
         {/if}
       {:else if view === "profile" && profileUserId !== null}
-        <ProfileView userId={profileUserId} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} isOwnProfile={me?.id === profileUserId} />
+        {#key `${profileUserId}-${profileRefreshKey}`}
+          <ProfileView userId={profileUserId} onOpenProfile={openProfile} onOpenTrack={openTrack} isOwnProfile={me?.id === profileUserId} />
+        {/key}
       {/if}
     </main>
 
-    <PlayerBar onOpenTrack={(tr) => (selectedTrack = tr)} onOpenProfile={openProfile} />
+    <SyncStatusBar />
+    <PlayerBar onOpenTrack={openTrack} onOpenProfile={openProfile} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />
   </div>
 {/if}
   </div>

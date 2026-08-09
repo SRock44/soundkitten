@@ -33,6 +33,10 @@ pub struct Profile {
     pub followers_count: Option<i64>,
     pub followings_count: Option<i64>,
     pub track_count: Option<i64>,
+    /// Used to cheaply detect "did my likes change" (e.g. after liking a
+    /// track on soundcloud.com in a browser) without re-fetching the whole
+    /// likes list on a timer -- see the frontend's likes-sync logic.
+    pub likes_count: Option<i64>,
     pub visuals: Option<Visuals>,
 }
 
