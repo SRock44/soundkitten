@@ -1,5 +1,10 @@
 name: build
 
+# Deliberately cheap: type-check + test + `cargo check` only, no full Tauri
+# build/bundle. That's expensive (especially macOS runners, billed at a 10x
+# minute multiplier) and isn't worth doing on every push/PR -- the full
+# 4-platform build+bundle+sign happens once, in release.yml, on version tags.
+
 on:
   push:
     branches: [main]
@@ -40,5 +45,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Build (debug, no bundle signing)
-        run: npm run tauri build -- --debug
+      - name: Type-check
+        run: npm run check
+
+      - name: Frontend tests
+        run: npm run test
+
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
