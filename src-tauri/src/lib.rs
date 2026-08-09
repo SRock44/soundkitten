@@ -15,7 +15,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             auth::is_logged_in,
             auth::logout,
-            auth::set_manual_token,
             auth::start_login,
             auth::verify_auth,
             soundcloud::set_client_id_override,

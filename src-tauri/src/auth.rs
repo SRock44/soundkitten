@@ -42,16 +42,6 @@ pub fn logout() -> Result<(), String> {
     Ok(())
 }
 
-/// Manual fallback: user pastes their oauth_token cookie value directly.
-#[tauri::command]
-pub fn set_manual_token(token: String) -> Result<(), String> {
-    let token = token.trim();
-    if token.is_empty() {
-        return Err("token was empty".into());
-    }
-    store_token(token).map_err(|e| e.to_string())
-}
-
 /// Opens a login window pointed at soundcloud.com, polls the webview's cookie
 /// jar until an oauth_token cookie appears (i.e. the user finished logging in),
 /// stores it, closes the window, and emits `auth:result` to the frontend.

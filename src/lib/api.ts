@@ -6,7 +6,6 @@ export const api = {
   startLogin: () => invoke<void>("start_login"),
   verifyAuth: () => invoke<boolean>("verify_auth"),
   logout: () => invoke<void>("logout"),
-  setManualToken: (token: string) => invoke<void>("set_manual_token", { token }),
   search: (query: string) => invoke<Track[]>("sc_search", { query }),
   likes: () => invoke<Track[]>("sc_likes"),
   playlists: () => invoke<Playlist[]>("sc_playlists"),

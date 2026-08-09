@@ -1,19 +1,7 @@
 <script lang="ts">
   import WindowControls from "./WindowControls.svelte";
 
-  let {
-    onLogin,
-    status,
-    showManualFallback,
-    onSubmitManualToken,
-  }: {
-    onLogin: () => void;
-    status: string;
-    showManualFallback: boolean;
-    onSubmitManualToken: (token: string) => void;
-  } = $props();
-
-  let manualToken = $state("");
+  let { onLogin, status }: { onLogin: () => void; status: string } = $props();
 </script>
 
 <div class="page">
@@ -28,13 +16,6 @@
     <button class="login-btn" onclick={onLogin}>Log in with SoundCloud</button>
     {#if status}
       <p class="status">{status}</p>
-    {/if}
-    {#if showManualFallback}
-      <div class="fallback">
-        <p>If the login window didn't work, paste your <code>oauth_token</code> cookie value manually:</p>
-        <input type="password" placeholder="oauth_token value" bind:value={manualToken} />
-        <button onclick={() => onSubmitManualToken(manualToken)}>Save token</button>
-      </div>
     {/if}
   </div>
 </div>
@@ -95,20 +76,5 @@
 .status {
   color: var(--muted);
   max-width: 24rem;
-}
-
-.fallback {
-  margin-top: 1rem;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  max-width: 24rem;
-}
-
-.fallback input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0.5em;
-  margin: 0.5em 0;
 }
 </style>

@@ -27,7 +27,6 @@
   let loggedIn = $state(false);
   let authChecked = $state(false);
   let authStatus = $state("");
-  let showManualFallback = $state(false);
   let me = $state<Profile | null>(null);
 
   let view = $state<View>("home");
@@ -242,23 +241,10 @@
 
   async function onLogin() {
     authStatus = "Opening SoundCloud login...";
-    showManualFallback = false;
     try {
       await api.startLogin();
     } catch (e) {
       authStatus = `Failed to open login window: ${e}`;
-      showManualFallback = true;
-    }
-  }
-
-  async function onSubmitManualToken(token: string) {
-    try {
-      await api.setManualToken(token);
-      showManualFallback = false;
-      authStatus = "Manual token saved.";
-      await refreshAuth();
-    } catch (e) {
-      authStatus = `Failed to save token: ${e}`;
     }
   }
 
@@ -337,13 +323,7 @@
     if (focused) syncLikesIfChanged();
   });
   listen<AuthEvent>("auth:result", async (event) => {
-    if (event.payload.ok) {
-      authStatus = "";
-      showManualFallback = false;
-    } else {
-      authStatus = `Login failed: ${event.payload.error ?? "unknown error"}`;
-      showManualFallback = true;
-    }
+    authStatus = event.payload.ok ? "" : `Login failed: ${event.payload.error ?? "unknown error"}`;
     await refreshAuth();
   });
 </script>
@@ -353,7 +333,7 @@
 {#if !authChecked}
   <div class="boot"></div>
 {:else if !loggedIn}
-  <LoginScreen onLogin={onLogin} status={authStatus} {showManualFallback} {onSubmitManualToken} />
+  <LoginScreen onLogin={onLogin} status={authStatus} />
 {:else}
   <div class="app">
     <TopNav
