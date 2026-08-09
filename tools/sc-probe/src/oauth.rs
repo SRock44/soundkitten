@@ -170,3 +170,54 @@ pub async fn authed_official_get(client: &reqwest::Client, path: &str, access_to
     }
     Ok(body)
 }
+
+/// Same as authed_official_get but returns the raw status + body without
+/// erroring on non-2xx, for checks where we specifically want to see the
+/// error shape (e.g. distinguishing "not found" from "not authorized" from
+/// "rate limited").
+pub async fn official_get_raw(client: &reqwest::Client, path: &str, access_token: &str) -> Result<(reqwest::StatusCode, Value)> {
+    let resp = client
+        .get(format!("{OFFICIAL_API}{path}"))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text.clone()));
+    Ok((status, body))
+}
+
+pub async fn official_write(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    path: &str,
+    access_token: &str,
+) -> Result<(reqwest::StatusCode, Value)> {
+    let resp = client
+        .request(method, format!("{OFFICIAL_API}{path}"))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text.clone()));
+    Ok((status, body))
+}
+
+/// Tests the official access_token against the UNOFFICIAL api-v2 host, using
+/// the same Authorization scheme the unofficial API expects. If this works,
+/// it means one login flow (official OAuth) could replace both the client_id
+/// scrape AND the cookie extraction, while still hitting api-v2 for whatever
+/// the official API doesn't cover.
+pub async fn try_official_token_on_unofficial_api(client: &reqwest::Client, access_token: &str, client_id: &str) -> Result<(reqwest::StatusCode, Value)> {
+    let resp = client
+        .get("https://api-v2.soundcloud.com/me")
+        .query(&[("client_id", client_id)])
+        .header("Authorization", format!("OAuth {access_token}"))
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text.clone()));
+    Ok((status, body))
+}
