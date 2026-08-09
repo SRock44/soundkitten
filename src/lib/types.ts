@@ -109,6 +109,38 @@ export type Playlist = {
   tracks: Track[];
 };
 
+/**
+ * SoundCloud-generated set ("Your Mix N", "Related tracks: ...", weekly
+ * mood mixes) as returned inside a mixed-selections module. Not a real
+ * playlist -- `id` is a string urn, there's no `/playlists/{id}` resource
+ * for it, and `tracks` only holds id stubs that need a separate hydration
+ * call (see `api.systemPlaylistTracks`).
+ */
+export type SystemPlaylist = {
+  id: string;
+  title: string | null;
+  artwork_url: string | null;
+  calculated_artwork_url: string | null;
+  permalink_url: string | null;
+  tracks: { id: number }[];
+};
+
+export function isSystemPlaylist(p: Playlist | SystemPlaylist): p is SystemPlaylist {
+  return typeof p.id === "string";
+}
+
+export function selectionArtwork(p: Playlist | SystemPlaylist): string | null {
+  if (isSystemPlaylist(p)) return p.artwork_url ?? p.calculated_artwork_url;
+  return p.artwork_url;
+}
+
+/** SoundCloud's homepage curation modules (Trending by genre, etc). */
+export type Selection = {
+  urn: string | null;
+  title: string | null;
+  items: { collection: (Playlist | SystemPlaylist)[] };
+};
+
 export function formatDuration(ms: number | null): string {
   if (!ms || ms <= 0) return "--:--";
   const totalSeconds = Math.floor(ms / 1000);

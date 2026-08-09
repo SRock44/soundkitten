@@ -9,10 +9,10 @@
   import ProfileView from "$lib/components/Profile.svelte";
   import Home from "$lib/components/Home.svelte";
   import TrackDetail from "$lib/components/TrackDetail.svelte";
-  import TitleBar from "$lib/components/TitleBar.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { likes as likesStore } from "$lib/stores/likes.svelte";
-  import type { Playlist, Profile, Track } from "$lib/types";
+  import { following as followingStore } from "$lib/stores/following.svelte";
+  import type { Playlist, Profile, SystemPlaylist, Track } from "$lib/types";
 
   type AuthEvent = { ok: boolean; error: string | null };
   type View = "home" | "search" | "likes" | "playlists" | "profile";
@@ -24,6 +24,7 @@
   let me = $state<Profile | null>(null);
 
   let view = $state<View>("home");
+  let playlistReturnView = $state<View>("home");
   let searchQuery = $state("");
   let searchTab = $state<"tracks" | "people">("tracks");
   let searchResults = $state<Track[]>([]);
@@ -38,8 +39,10 @@
   let loadError = $state("");
 
   async function viewPlaylist(p: Playlist) {
+    if (view !== "playlists") playlistReturnView = view;
     view = "playlists";
     openPlaylist = p;
+    loadError = "";
     if (p.tracks.length > 0) return; // already hydrated
     openPlaylistLoading = true;
     try {
@@ -52,12 +55,39 @@
     openPlaylistLoading = false;
   }
 
+  async function viewSystemPlaylist(sp: SystemPlaylist) {
+    if (view !== "playlists") playlistReturnView = view;
+    view = "playlists";
+    const shell: Playlist = {
+      id: -1,
+      title: sp.title,
+      permalink_url: sp.permalink_url,
+      artwork_url: sp.artwork_url ?? sp.calculated_artwork_url,
+      track_count: sp.tracks.length,
+      tracks: [],
+    };
+    openPlaylist = shell;
+    loadError = "";
+    openPlaylistLoading = true;
+    try {
+      const tracks = await api.systemPlaylistTracks(sp.tracks.map((t) => t.id));
+      // $state wraps `shell` in a proxy on assignment, so `openPlaylist === shell`
+      // never holds -- compare by permalink_url (unique per system playlist)
+      // instead, to guard against the user navigating elsewhere mid-fetch.
+      if (openPlaylist?.permalink_url === shell.permalink_url) openPlaylist = { ...shell, tracks };
+    } catch (e) {
+      loadError = `Failed to load mix tracks: ${e}`;
+    }
+    openPlaylistLoading = false;
+  }
+
   async function refreshAuth() {
     loggedIn = await api.isLoggedIn();
     authChecked = true;
     if (loggedIn) {
       navigate(view);
       api.me().then((p) => (me = p)).catch(() => {});
+      api.myFollowingsIds().then((ids) => followingStore.seed(ids)).catch(() => {});
     }
   }
 
@@ -175,7 +205,6 @@
 </script>
 
 <div class="window">
-  <TitleBar />
   <div class="window-body">
 {#if !authChecked}
   <div class="boot"></div>
@@ -197,7 +226,7 @@
       {#if selectedTrack}
         <TrackDetail track={selectedTrack} onBack={() => (selectedTrack = null)} onOpenProfile={(id) => { selectedTrack = null; openProfile(id); }} />
       {:else if view === "home"}
-        <Home {me} {likes} {playlists} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} onOpenPlaylist={viewPlaylist} />
+        <Home {me} {likes} {playlists} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={(tr) => (selectedTrack = tr)} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
       {:else if view === "search"}
         <div class="search-tabs">
           <button class:active={searchTab === "tracks"} onclick={() => switchSearchTab("tracks")}>Tracks</button>
@@ -246,10 +275,12 @@
         {/if}
       {:else if view === "playlists"}
         {#if openPlaylist}
-          <button class="back" onclick={() => (openPlaylist = null)}><Icon name="arrow-left" size={14} /> Playlists</button>
+          <button class="back" onclick={() => navigate(playlistReturnView)}><Icon name="arrow-left" size={14} /> Back</button>
           <h1>{openPlaylist.title ?? "Untitled playlist"}</h1>
           {#if openPlaylistLoading}
             <p class="muted">Loading tracks...</p>
+          {:else if loadError}
+            <p class="error-text">{loadError}</p>
           {:else if openPlaylist.tracks.length === 0}
             <p class="muted">This playlist has no tracks.</p>
           {:else}

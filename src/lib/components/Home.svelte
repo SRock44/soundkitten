@@ -1,7 +1,7 @@
 <script lang="ts">
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
-  import type { Playlist, Profile, Track } from "../types";
+  import { isSystemPlaylist, selectionArtwork, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
   import Icon from "./Icon.svelte";
 
@@ -13,6 +13,7 @@
     onOpenProfile,
     onOpenTrack,
     onOpenPlaylist,
+    onOpenSystemPlaylist,
   }: {
     me: Profile | null;
     likes: Track[];
@@ -21,17 +22,34 @@
     onOpenProfile: (id: number) => void;
     onOpenTrack: (t: Track) => void;
     onOpenPlaylist: (p: Playlist) => void;
+    onOpenSystemPlaylist: (p: SystemPlaylist) => void;
   } = $props();
+
+  function openSelectionItem(p: Playlist | SystemPlaylist) {
+    if (isSystemPlaylist(p)) onOpenSystemPlaylist(p);
+    else onOpenPlaylist(p);
+  }
 
   let feed = $state<Track[]>([]);
   let feedLoading = $state(true);
   let feedError = $state("");
+  let feedExpanded = $state(false);
+  const FEED_PREVIEW_COUNT = 5;
+
+  let selections = $state<Selection[]>([]);
+  let selectionsLoading = $state(true);
 
   api
     .feed()
     .then((f) => (feed = f))
     .catch((e) => (feedError = `Failed to load feed: ${e}`))
     .finally(() => (feedLoading = false));
+
+  api
+    .mixedSelections()
+    .then((s) => (selections = s.filter((sel) => sel.items.collection.length > 0)))
+    .catch((e) => console.error("failed to load mixed selections", e))
+    .finally(() => (selectionsLoading = false));
 </script>
 
 <div class="home">
@@ -46,9 +64,14 @@
     {:else if feed.length === 0}
       <p class="muted">No recent activity from people you follow.</p>
     {:else}
-      <div class="list">
-        {#each feed as t, i}<TrackRow track={t} queue={feed} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+      <div class="list" class:scrollable={feedExpanded}>
+        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as t, i}<TrackRow track={t} queue={feed} index={i} {onOpenProfile} {onOpenTrack} />{/each}
       </div>
+      {#if feed.length > FEED_PREVIEW_COUNT}
+        <button class="see-all" onclick={() => (feedExpanded = !feedExpanded)}>
+          {feedExpanded ? "Show less ↑" : `Show more (${feed.length - FEED_PREVIEW_COUNT}) →`}
+        </button>
+      {/if}
     {/if}
   </section>
 
@@ -97,6 +120,26 @@
       </div>
     {/if}
   </section>
+
+  {#if !selectionsLoading && selections.length > 0}
+    {#each selections as sel}
+      <section>
+        <h2>{sel.title ?? "Discover"}</h2>
+        <div class="playlist-row">
+          {#each sel.items.collection as p}
+            <button class="playlist-card" onclick={() => openSelectionItem(p)}>
+              {#if selectionArtwork(p)}
+                <img src={selectionArtwork(p)} alt="" />
+              {:else}
+                <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
+              {/if}
+              <span class="playlist-title">{p.title ?? "Untitled"}</span>
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/each}
+  {/if}
 </div>
 
 <style>
@@ -140,20 +183,28 @@ h2 {
   gap: 0.1rem;
 }
 
+.list.scrollable {
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
 .muted {
   color: var(--muted);
 }
 
 .playlist-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  display: flex;
   gap: 1.1rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
 }
 
 .playlist-card {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
+  flex: 0 0 140px;
+  width: 140px;
   background: none;
   border: none;
   padding: 0;

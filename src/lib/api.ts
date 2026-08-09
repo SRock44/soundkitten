@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Comment, Playlist, Profile, Track, UserComment } from "./types";
+import type { Comment, Playlist, Profile, Selection, Track, UserComment } from "./types";
 
 export const api = {
   isLoggedIn: () => invoke<boolean>("is_logged_in"),
@@ -25,8 +25,11 @@ export const api = {
   userPlaylists: (userId: number) => invoke<Playlist[]>("sc_user_playlists", { userId }),
   userFollowers: (userId: number) => invoke<Profile[]>("sc_user_followers", { userId }),
   userFollowings: (userId: number) => invoke<Profile[]>("sc_user_followings", { userId }),
+  myFollowingsIds: () => invoke<number[]>("sc_my_followings_ids"),
   userComments: (userId: number) => invoke<UserComment[]>("sc_user_comments", { userId }),
   playlist: (playlistId: number) => invoke<Playlist>("sc_playlist", { playlistId }),
+  mixedSelections: () => invoke<Selection[]>("sc_mixed_selections"),
+  systemPlaylistTracks: (trackIds: number[]) => invoke<Track[]>("sc_system_playlist_tracks", { trackIds }),
 };
 
 export function streamUrl(trackId: number): string {
