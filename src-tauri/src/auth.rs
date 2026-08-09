@@ -20,6 +20,7 @@
 //! finding out the next time it happens to check.
 
 use serde::Serialize;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -33,12 +34,34 @@ fn keyring_entry() -> anyhow::Result<keyring::Entry> {
     Ok(keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?)
 }
 
+/// In-process cache of the stored token, populated on first read. Without
+/// a stable Apple Developer signature, macOS ties Keychain access approval
+/// to the app's exact code signature, which changes on every build
+/// (including every auto-update), so it can't recognize "already approved"
+/// across versions and re-prompts. get_stored_token() is called from
+/// nearly every backend command, so reading straight from the OS keychain
+/// every time turned that into dozens of prompts in a single startup burst
+/// (reported live: "like 70 times" right after an update). Reading once
+/// per process and caching the result cuts that down to essentially one
+/// prompt per session, the actual per-signature re-approval is still real
+/// and can't be avoided without notarization, but it no longer compounds.
+fn token_cache() -> &'static Mutex<Option<String>> {
+    static CACHE: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
 pub fn get_stored_token() -> Option<String> {
-    keyring_entry().ok()?.get_password().ok()
+    if let Some(token) = token_cache().lock().unwrap().as_ref() {
+        return Some(token.clone());
+    }
+    let token = keyring_entry().ok()?.get_password().ok()?;
+    *token_cache().lock().unwrap() = Some(token.clone());
+    Some(token)
 }
 
 fn store_token(token: &str) -> anyhow::Result<()> {
     keyring_entry()?.set_password(token)?;
+    *token_cache().lock().unwrap() = Some(token.to_string());
     Ok(())
 }
 
@@ -59,6 +82,7 @@ pub fn logout() -> Result<(), String> {
         // Absence of a stored credential is not an error here.
         let _ = entry.delete_credential();
     }
+    *token_cache().lock().unwrap() = None;
     Ok(())
 }
 
