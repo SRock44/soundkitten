@@ -5,6 +5,8 @@
   import TrackRow from "./TrackRow.svelte";
   import Icon from "./Icon.svelte";
   import UserListModal from "./UserListModal.svelte";
+  import ShareButton from "./ShareButton.svelte";
+  import FollowButton from "./FollowButton.svelte";
 
   let {
     userId,
@@ -115,6 +117,12 @@
         <button class="stat-btn" onclick={openFollowers}><strong>{(profile.followers_count ?? 0).toLocaleString()}</strong> followers</button>
         <button class="stat-btn" onclick={() => (listModal = "following")}><strong>{(profile.followings_count ?? 0).toLocaleString()}</strong> following</button>
       </div>
+    </div>
+    <div class="header-actions">
+      {#if !isOwnProfile}
+        <FollowButton userId={profile.id} permalinkUrl={profile.permalink_url} />
+      {/if}
+      <ShareButton url={profile.permalink_url} />
     </div>
   </div>
 
@@ -246,6 +254,15 @@
   gap: 1.25rem;
   align-items: flex-start;
   margin-bottom: 1.25rem;
+}
+
+.header-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.5rem;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .profile-header.with-banner {
