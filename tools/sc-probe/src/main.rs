@@ -406,6 +406,46 @@ async fn run_oauth_checks(port: u16) -> Result<()> {
         println!("[{total}] refresh_token exchange ... SKIPPED (no refresh_token returned)");
     }
 
+    // End-to-end test of the deployed oauth-proxy (services/oauth-proxy, now
+    // running as a Node service on node1 behind auth.soundkitten.org): does
+    // the SAME refresh_token, sent through the public proxy instead of
+    // directly to SoundCloud, come back with a valid access_token? This is
+    // the one thing the proxy's own negative tests (405/401/400 checks)
+    // couldn't prove, since none of them reach the code path that actually
+    // reads SC_CLIENT_ID/SC_CLIENT_SECRET from the container's environment
+    // and forwards to SoundCloud. Never prints the refresh_token or the
+    // resulting access_token, only whether one came back.
+    if !tokens.refresh_token.is_empty() {
+        if let Ok(proxy_key) = std::env::var("PROXY_ACCESS_KEY") {
+            total += 1;
+            print!("[{total}] refresh_token exchange via deployed oauth-proxy (auth.soundkitten.org) ... ");
+            std::io::stdout().flush().ok();
+            let resp = client
+                .post("https://auth.soundkitten.org/token/refresh")
+                .header("x-soundkitten-key", &proxy_key)
+                .json(&serde_json::json!({ "refresh_token": tokens.refresh_token }))
+                .send()
+                .await;
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    let body: Value = r.json().await.unwrap_or(Value::Null);
+                    let has_access_token = body.get("access_token").and_then(|v| v.as_str()).is_some();
+                    if status.is_success() && has_access_token {
+                        println!("PASS (proxy forwarded to SoundCloud and returned a valid access_token)");
+                        passed += 1;
+                    } else {
+                        println!("FAIL: {status}, access_token present: {has_access_token}");
+                    }
+                }
+                Err(e) => println!("FAIL: request failed: {e:#}"),
+            }
+        } else {
+            total += 1;
+            println!("[{total}] refresh_token exchange via deployed oauth-proxy ... SKIPPED (PROXY_ACCESS_KEY not set)");
+        }
+    }
+
     println!("\n=== {passed}/{total} official-API checks passed ===");
     println!("\nNOTE: download-endpoint availability on the official API still needs manual verification");
     println!("against a track you have download rights to, not yet automated here.");
