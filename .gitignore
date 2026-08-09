@@ -11,3 +11,6 @@ dist/
 !.env.example
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# closed-source, not part of the open-source app
+/website
