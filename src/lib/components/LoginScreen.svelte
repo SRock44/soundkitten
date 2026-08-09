@@ -1,4 +1,6 @@
 <script lang="ts">
+  import WindowControls from "./WindowControls.svelte";
+
   let {
     onLogin,
     status,
@@ -14,29 +16,55 @@
   let manualToken = $state("");
 </script>
 
-<div class="login-screen">
-  <h1>SoundCloud Desktop</h1>
-  <p class="subtitle">An unofficial, open-source, streaming-only client.</p>
-  <button class="login-btn" onclick={onLogin}>Log in with SoundCloud</button>
-  {#if status}
-    <p class="status">{status}</p>
-  {/if}
-  {#if showManualFallback}
-    <div class="fallback">
-      <p>If the login window didn't work, paste your <code>oauth_token</code> cookie value manually:</p>
-      <input type="password" placeholder="oauth_token value" bind:value={manualToken} />
-      <button onclick={() => onSubmitManualToken(manualToken)}>Save token</button>
-    </div>
-  {/if}
+<div class="page">
+  <div class="titlebar" data-tauri-drag-region>
+    <WindowControls />
+  </div>
+
+  <div class="login-screen">
+    <img src="/logo.png" alt="" class="logo" />
+    <h1>SoundKitten</h1>
+    <p class="subtitle">An unofficial, open-source, streaming-only client for SoundCloud.</p>
+    <button class="login-btn" onclick={onLogin}>Log in with SoundCloud</button>
+    {#if status}
+      <p class="status">{status}</p>
+    {/if}
+    {#if showManualFallback}
+      <div class="fallback">
+        <p>If the login window didn't work, paste your <code>oauth_token</code> cookie value manually:</p>
+        <input type="password" placeholder="oauth_token value" bind:value={manualToken} />
+        <button onclick={() => onSubmitManualToken(manualToken)}>Save token</button>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.titlebar {
+  display: flex;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+
+.logo {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  margin-bottom: 0.25rem;
+}
+
 .login-screen {
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 100%;
   gap: 0.75rem;
   text-align: center;
   padding: 2rem;

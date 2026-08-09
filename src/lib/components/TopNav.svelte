@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Profile } from "../types";
   import Icon from "./Icon.svelte";
+  import WindowControls from "./WindowControls.svelte";
 
   type View = "home" | "search" | "likes" | "playlists";
   let {
@@ -21,9 +22,9 @@
     onOpenOwnProfile: () => void;
   } = $props();
 
-  let openMenu = $state<"account" | "notifications" | "messages" | null>(null);
+  let openMenu = $state<"account" | "notifications" | null>(null);
 
-  function toggleMenu(menu: "account" | "notifications" | "messages") {
+  function toggleMenu(menu: "account" | "notifications") {
     openMenu = openMenu === menu ? null : menu;
   }
 
@@ -34,86 +35,92 @@
 
 <svelte:window onclick={closeMenus} />
 
-<header class="topnav">
-  <div class="left">
-    <button class="logo" onclick={() => onNavigate("home")}>soundcloud<span class="dot">.</span></button>
-    <nav class="links">
-      <button class:active={active === "home"} onclick={() => onNavigate("home")}>Home</button>
-      <button class:active={active === "likes"} onclick={() => onNavigate("likes")}>Likes</button>
-      <button class:active={active === "playlists"} onclick={() => onNavigate("playlists")}>Playlists</button>
-    </nav>
+<div class="topnav-wrapper">
+  <div class="utility-bar" data-tauri-drag-region>
+    <WindowControls />
   </div>
 
-  <form class="search" onsubmit={(e) => { e.preventDefault(); onNavigate("search"); onSearch(); }}>
-    <input placeholder="Search tracks" bind:value={searchQuery} />
-    <button type="submit" aria-label="Search"><Icon name="search" /></button>
-  </form>
-
-  <div class="right">
-    <div class="menu-wrap">
-      <button
-        class="icon-btn"
-        aria-label="Notifications"
-        onclick={(e) => { e.stopPropagation(); toggleMenu("notifications"); }}
-      ><Icon name="bell" /></button>
-      {#if openMenu === "notifications"}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="dropdown" onclick={(e) => e.stopPropagation()} role="presentation">
-          <p class="empty">No new notifications.</p>
-        </div>
-      {/if}
-    </div>
-
-    <div class="menu-wrap">
-      <button
-        class="icon-btn"
-        aria-label="Messages"
-        onclick={(e) => { e.stopPropagation(); toggleMenu("messages"); }}
-      ><Icon name="mail" /></button>
-      {#if openMenu === "messages"}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="dropdown" onclick={(e) => e.stopPropagation()} role="presentation">
-          <p class="empty">Messaging isn't available in this app.</p>
-        </div>
-      {/if}
-    </div>
-
-    <div class="menu-wrap">
-      <button
-        class="account-btn"
-        onclick={(e) => { e.stopPropagation(); toggleMenu("account"); }}
-        aria-label="Account menu"
-      >
-        {#if me?.avatar_url}
-          <img src={me.avatar_url} alt="" class="avatar" />
-        {:else}
-          <span class="avatar avatar-fallback">{(me?.username ?? "?")[0]?.toUpperCase()}</span>
-        {/if}
-        <span class="chevron"><Icon name="chevron-down" size={12} /></span>
+  <header class="topnav">
+    <div class="left">
+      <button class="logo" onclick={() => onNavigate("home")}>
+        <img src="/logo.png" alt="" class="logo-mark" />
+        <span class="logo-text">SoundKitten</span>
       </button>
-      {#if openMenu === "account"}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="dropdown account-dropdown" onclick={(e) => e.stopPropagation()} role="presentation">
-          <button onclick={() => { onOpenOwnProfile(); closeMenus(); }}>Profile</button>
-          <button onclick={() => { onLogout(); closeMenus(); }}>Log out</button>
-        </div>
-      {/if}
+      <nav class="links">
+        <button class:active={active === "home"} onclick={() => onNavigate("home")}>Home</button>
+        <button class:active={active === "likes"} onclick={() => onNavigate("likes")}>Likes</button>
+        <button class:active={active === "playlists"} onclick={() => onNavigate("playlists")}>Playlists</button>
+      </nav>
     </div>
-  </div>
-</header>
+
+    <form class="search" onsubmit={(e) => { e.preventDefault(); onNavigate("search"); onSearch(); }}>
+      <input placeholder="Search tracks" bind:value={searchQuery} />
+      <button type="submit" aria-label="Search"><Icon name="search" /></button>
+    </form>
+
+    <div class="right">
+      <div class="menu-wrap">
+        <button
+          class="icon-btn"
+          aria-label="Notifications"
+          onclick={(e) => { e.stopPropagation(); toggleMenu("notifications"); }}
+        ><Icon name="bell" /></button>
+        {#if openMenu === "notifications"}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="dropdown" onclick={(e) => e.stopPropagation()} role="presentation">
+            <p class="empty">No new notifications.</p>
+          </div>
+        {/if}
+      </div>
+
+      <div class="menu-wrap">
+        <button
+          class="account-btn"
+          onclick={(e) => { e.stopPropagation(); toggleMenu("account"); }}
+          aria-label="Account menu"
+        >
+          {#if me?.avatar_url}
+            <img src={me.avatar_url} alt="" class="avatar" />
+          {:else}
+            <span class="avatar avatar-fallback">{(me?.username ?? "?")[0]?.toUpperCase()}</span>
+          {/if}
+          <span class="chevron"><Icon name="chevron-down" size={12} /></span>
+        </button>
+        {#if openMenu === "account"}
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="dropdown account-dropdown" onclick={(e) => e.stopPropagation()} role="presentation">
+            <button onclick={() => { onOpenOwnProfile(); closeMenus(); }}>Profile</button>
+            <button onclick={() => { onLogout(); closeMenus(); }}>Log out</button>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </header>
+</div>
 
 <style>
+.topnav-wrapper {
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+.utility-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: 30px;
+  padding: 0 0.35rem 0 1.25rem;
+}
+
 .topnav {
   display: grid;
   grid-template-columns: 1fr minmax(280px, 480px) 1fr;
   align-items: center;
   height: 56px;
   padding: 0 1.25rem;
-  background: var(--nav-bg);
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-  position: relative;
-  z-index: 10;
 }
 
 .left {
@@ -124,8 +131,11 @@
 }
 
 .logo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   font-weight: 800;
-  font-size: 1.15rem;
+  font-size: 1.05rem;
   letter-spacing: -0.02em;
   color: var(--fg);
   flex-shrink: 0;
@@ -136,8 +146,10 @@
   font-family: inherit;
 }
 
-.dot {
-  color: var(--accent);
+.logo-mark {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
 }
 
 .links {
@@ -223,9 +235,6 @@
 
 .icon-btn:hover {
   color: var(--fg);
-}
-
-.icon-btn:hover {
   background: var(--row-hover);
 }
 
