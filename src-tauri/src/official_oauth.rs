@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -56,14 +56,31 @@ fn keyring_entry() -> anyhow::Result<keyring::Entry> {
     Ok(keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?)
 }
 
+// Same in-process caching as auth.rs's token_cache, and for the same
+// reason: without a stable Apple Developer signature, macOS re-prompts
+// for Keychain access on every build (including every auto-update), and
+// load_tokens() is called on every official-OAuth write (like/follow),
+// so reading straight from the OS keychain each time turned into a
+// prompt storm. See auth.rs for the fuller explanation.
+fn tokens_cache() -> &'static Mutex<Option<StoredTokens>> {
+    static CACHE: OnceLock<Mutex<Option<StoredTokens>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
 fn load_tokens() -> Option<StoredTokens> {
+    if let Some(tokens) = tokens_cache().lock().unwrap().as_ref() {
+        return Some(tokens.clone());
+    }
     let raw = keyring_entry().ok()?.get_password().ok()?;
-    serde_json::from_str(&raw).ok()
+    let tokens: StoredTokens = serde_json::from_str(&raw).ok()?;
+    *tokens_cache().lock().unwrap() = Some(tokens.clone());
+    Some(tokens)
 }
 
 fn store_tokens(tokens: &StoredTokens) -> anyhow::Result<()> {
     let raw = serde_json::to_string(tokens)?;
     keyring_entry()?.set_password(&raw)?;
+    *tokens_cache().lock().unwrap() = Some(tokens.clone());
     Ok(())
 }
 
@@ -71,6 +88,7 @@ fn clear_tokens() {
     if let Ok(entry) = keyring_entry() {
         let _ = entry.delete_credential();
     }
+    *tokens_cache().lock().unwrap() = None;
 }
 
 fn now_unix() -> u64 {
