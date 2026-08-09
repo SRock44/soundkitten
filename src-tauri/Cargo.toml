@@ -27,7 +27,17 @@ regex = "1"
 url = "2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
 anyhow = "1"
-tokio = { version = "1", features = ["time"] }
+tokio = { version = "1", features = ["time", "sync"] }
 base64 = "0.22"
 tauri-plugin-clipboard-manager = "2.3.2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-dialog = "2"
+
+[profile.release]
+opt-level = "z"    # optimize for binary size -- this app is I/O-bound (HTTP + audio streaming), not compute-bound, so raw speed headroom matters less than a smaller/faster-to-load binary
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
 

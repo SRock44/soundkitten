@@ -7,6 +7,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("sc-stream", playback::handler)
         .invoke_handler(tauri::generate_handler![
             auth::is_logged_in,
@@ -15,6 +18,8 @@ pub fn run() {
             auth::start_login,
             auth::verify_auth,
             soundcloud::set_client_id_override,
+            soundcloud::clear_client_id_override,
+            soundcloud::get_client_id_override,
             soundcloud::commands::sc_search,
             soundcloud::commands::sc_resolve,
             soundcloud::commands::sc_likes,
