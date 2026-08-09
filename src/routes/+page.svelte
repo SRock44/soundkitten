@@ -525,6 +525,15 @@
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
+/* No visible focus ring anywhere -- this app is mouse-driven, and the
+   default ring made tabbing (and Space, which both toggles playback via
+   the global handler AND activates whatever button happens to be
+   focused) look and feel broken. Losing the keyboard-accessibility
+   affordance is a deliberate tradeoff here, not an oversight. */
+:global(*:focus) {
+  outline: none;
+}
+
 :global(*::-webkit-scrollbar) {
   width: 10px;
   height: 10px;
