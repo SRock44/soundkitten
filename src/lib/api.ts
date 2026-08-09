@@ -30,6 +30,9 @@ export const api = {
   playlist: (playlistId: number) => invoke<Playlist>("sc_playlist", { playlistId }),
   mixedSelections: () => invoke<Selection[]>("sc_mixed_selections"),
   systemPlaylistTracks: (trackIds: number[]) => invoke<Track[]>("sc_system_playlist_tracks", { trackIds }),
+  setClientIdOverride: (id: string) => invoke<void>("set_client_id_override", { id }),
+  clearClientIdOverride: () => invoke<void>("clear_client_id_override"),
+  getClientIdOverride: () => invoke<string | null>("get_client_id_override"),
 };
 
 export function streamUrl(trackId: number): string {

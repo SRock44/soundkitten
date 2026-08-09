@@ -30,7 +30,9 @@
     | "shuffle"
     | "repeat"
     | "user"
-    | "user-filled";
+    | "user-filled"
+    | "cloud"
+    | "refresh";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -138,5 +140,16 @@
   {:else if name === "user-filled"}
     <circle cx="10" cy="6.5" r="3" fill="currentColor" stroke="none" />
     <path d="M4 16.5a6 6 0 0 1 12 0" fill="currentColor" stroke="none" />
+  {:else if name === "cloud"}
+    <path
+      d="M6.2 15.5a3.3 3.3 0 0 1-.4-6.58 4.2 4.2 0 0 1 8.1-1.4 3.15 3.15 0 0 1 3.6 3.1 3.15 3.15 0 0 1-3.1 3.15c-.1 0-.2 0-.3-.01v1.74Z"
+      fill="currentColor"
+      stroke="none"
+    />
+  {:else if name === "refresh"}
+    <path d="M4 10a6 6 0 0 1 10.24-4.24" />
+    <polyline points="14.5 2.5 14.5 6.5 10.5 6.5" />
+    <path d="M16 10a6 6 0 0 1-10.24 4.24" />
+    <polyline points="5.5 17.5 5.5 13.5 9.5 13.5" />
   {/if}
 </svg>

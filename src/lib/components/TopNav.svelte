@@ -2,6 +2,7 @@
   import type { Profile } from "../types";
   import Icon from "./Icon.svelte";
   import WindowControls from "./WindowControls.svelte";
+  import SettingsModal from "./SettingsModal.svelte";
 
   type View = "home" | "search" | "likes" | "playlists";
   let {
@@ -12,6 +13,10 @@
     onSearch,
     me,
     onOpenOwnProfile,
+    canGoBack = false,
+    onBack,
+    onRefresh,
+    refreshing = false,
   }: {
     active: View;
     onNavigate: (v: View) => void;
@@ -20,9 +25,14 @@
     onSearch: () => void;
     me: Profile | null;
     onOpenOwnProfile: () => void;
+    canGoBack?: boolean;
+    onBack?: () => void;
+    onRefresh?: () => void;
+    refreshing?: boolean;
   } = $props();
 
   let openMenu = $state<"account" | "notifications" | null>(null);
+  let showSettings = $state(false);
 
   function toggleMenu(menu: "account" | "notifications") {
     openMenu = openMenu === menu ? null : menu;
@@ -37,6 +47,12 @@
 
 <div class="topnav-wrapper">
   <div class="utility-bar" data-tauri-drag-region>
+    <div class="nav-controls">
+      <button class="nav-btn" onclick={onBack} disabled={!canGoBack} aria-label="Back" title="Back"><Icon name="arrow-left" size={15} /></button>
+      <button class="nav-btn" class:spinning={refreshing} onclick={onRefresh} disabled={refreshing} aria-label="Refresh" title="Refresh">
+        <Icon name="refresh" size={15} />
+      </button>
+    </div>
     <WindowControls />
   </div>
 
@@ -90,6 +106,7 @@
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
           <div class="dropdown account-dropdown" onclick={(e) => e.stopPropagation()} role="presentation">
             <button onclick={() => { onOpenOwnProfile(); closeMenus(); }}>Profile</button>
+            <button onclick={() => { showSettings = true; closeMenus(); }}>Settings</button>
             <button onclick={() => { onLogout(); closeMenus(); }}>Log out</button>
           </div>
         {/if}
@@ -97,6 +114,10 @@
     </div>
   </header>
 </div>
+
+{#if showSettings}
+  <SettingsModal onClose={() => (showSettings = false)} />
+{/if}
 
 <style>
 .topnav-wrapper {
@@ -110,9 +131,51 @@
 .utility-bar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   height: 30px;
   padding: 0 0.35rem 0 1.25rem;
+}
+
+.nav-controls {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 30px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.nav-btn:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--row-hover);
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.nav-btn.spinning :global(svg) {
+  animation: nav-btn-spin 0.7s linear infinite;
+}
+
+@keyframes nav-btn-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .topnav {
