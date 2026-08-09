@@ -77,6 +77,7 @@
     pushHistory();
     view = "playlists";
     openPlaylist = p;
+    selectedTrack = null;
     loadError = "";
     if (p.tracks.length > 0) return; // already hydrated
     openPlaylistLoading = true;
@@ -102,6 +103,7 @@
       tracks: [],
     };
     openPlaylist = shell;
+    selectedTrack = null;
     loadError = "";
     openPlaylistLoading = true;
     try {
@@ -267,6 +269,7 @@
     pushHistory();
     profileUserId = userId;
     view = "profile";
+    selectedTrack = null;
   }
 
   async function navigate(v: View) {
@@ -276,6 +279,7 @@
     if (v !== view) pushHistory();
     view = v;
     openPlaylist = null;
+    selectedTrack = null;
     if (v !== "profile") profileUserId = null;
     loadError = "";
     if (v === "home") {
