@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::Rng;
@@ -28,6 +28,7 @@ const REDIRECT_PORT: u16 = 8765;
 
 const KEYRING_SERVICE: &str = "com.soundkitten.app.official";
 const KEYRING_USER: &str = "official_oauth_tokens";
+const OFFICIAL_LOGIN_WINDOW_LABEL: &str = "sc-official-login";
 
 // Abuse deterrent for the proxy, not a real secret (see
 // services/oauth-proxy/, comment there explains why this one is fine to
@@ -208,30 +209,73 @@ async fn get_valid_access_token() -> Result<String, String> {
     Ok(refreshed.access_token)
 }
 
-/// The official OAuth connect flow, in the system browser per RFC 8252's
-/// recommendation for native-app OAuth. Called two ways: automatically,
-/// right after primary login succeeds (see auth.rs's start_login), so it
-/// reads as one continuous onboarding moment; and lazily, from the
-/// frontend's officialAuth store, if the user declined or closed the
-/// browser tab the first time and now wants to like or follow something.
+/// The official OAuth connect flow, shown as an embedded popup window
+/// rather than the system browser. It's a separate WebviewWindow in the
+/// same app as auth.rs's primary login window, sharing the same WebView2
+/// profile/cookies, so if the user already has an active SoundCloud
+/// session from primary login, /authorize should recognize it and go
+/// straight to the consent screen instead of asking them to log in again.
+/// The window is closed automatically as soon as an answer comes back
+/// (code, denial, or the user closing it themselves), no waiting on the
+/// user to close it. Called two ways: automatically, right after primary
+/// login succeeds (see auth.rs's start_login), so it reads as one
+/// continuous onboarding moment; and lazily, from the frontend's
+/// officialAuth store, if the user declined the first time and now wants
+/// to like or follow something.
+///
+/// This still relies only on the PKCE + loopback-redirect mechanism
+/// that's independently proven (tools/sc-probe/src/oauth.rs, and this same
+/// function's own system-browser predecessor), not on reading any cookie
+/// out of the popup, which is the part that broke in an earlier attempt to
+/// merge this into the primary login webview itself.
 #[tauri::command]
 pub async fn start_official_login(app: AppHandle) -> Result<(), String> {
+    if app.get_webview_window(OFFICIAL_LOGIN_WINDOW_LABEL).is_some() {
+        return Ok(()); // already in progress
+    }
+
     let verifier = random_url_safe(64);
     let challenge = pkce_challenge(&verifier);
     let state = random_url_safe(16);
     let redirect_uri = redirect_uri();
     let auth_url = build_authorize_url(&challenge, &state, &redirect_uri).map_err(|e| e.to_string())?;
 
-    // Bind the listener BEFORE opening the browser so the redirect always
+    // Bind the listener BEFORE opening the window so the redirect always
     // has somewhere to land.
     let state_for_wait = state.clone();
     let wait_handle = tauri::async_runtime::spawn_blocking(move || wait_for_redirect(REDIRECT_PORT, &state_for_wait));
 
-    use tauri_plugin_opener::OpenerExt;
-    app.opener().open_url(auth_url.as_str(), None::<&str>).map_err(|e| e.to_string())?;
+    let _window = WebviewWindowBuilder::new(&app, OFFICIAL_LOGIN_WINDOW_LABEL, WebviewUrl::External(auth_url.as_str().parse().map_err(|e| format!("{e}"))?))
+        .title("Connect to SoundCloud")
+        .inner_size(480.0, 720.0)
+        .build()
+        .map_err(|e| e.to_string())?;
 
-    let code = wait_handle
-        .await
+    // Race the redirect against the user closing the popup themselves, so
+    // declining doesn't leave the command hanging until the loopback
+    // listener's own 180s timeout.
+    let app_for_watch = app.clone();
+    let window_closed = async move {
+        loop {
+            if app_for_watch.get_webview_window(OFFICIAL_LOGIN_WINDOW_LABEL).is_none() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(400)).await;
+        }
+    };
+    let redirect_result = tokio::select! {
+        r = wait_handle => Some(r),
+        _ = window_closed => None,
+    };
+
+    // Auto-close: the user shouldn't have to close this themselves once
+    // we have an answer either way.
+    if let Some(win) = app.get_webview_window(OFFICIAL_LOGIN_WINDOW_LABEL) {
+        let _ = win.close();
+    }
+
+    let code = redirect_result
+        .ok_or_else(|| "login window closed before completing".to_string())?
         .map_err(|e| format!("login task panicked: {e}"))?
         .map_err(|e| e.to_string())?;
 
