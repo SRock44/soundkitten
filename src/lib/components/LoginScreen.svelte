@@ -1,19 +1,16 @@
 <script lang="ts">
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import WindowControls from "./WindowControls.svelte";
 
-  let {
-    onLogin,
-    status,
-    showManualFallback,
-    onSubmitManualToken,
-  }: {
-    onLogin: () => void;
-    status: string;
-    showManualFallback: boolean;
-    onSubmitManualToken: (token: string) => void;
-  } = $props();
+  let { onLogin, status }: { onLogin: () => void; status: string } = $props();
 
-  let manualToken = $state("");
+  let agreed = $state(false);
+
+  function link(e: MouseEvent, url: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    openUrl(url);
+  }
 </script>
 
 <div class="page">
@@ -25,17 +22,21 @@
     <img src="/logo.png" alt="" class="logo" />
     <h1>SoundKitten</h1>
     <p class="subtitle">An unofficial, open-source, streaming-only client for SoundCloud.</p>
-    <button class="login-btn" onclick={onLogin}>Log in with SoundCloud</button>
+
+    <label class="agree">
+      <input type="checkbox" bind:checked={agreed} />
+      <span>
+        I agree to the <a href="https://soundkitten.org/terms" onclick={(e) => link(e, "https://soundkitten.org/terms")}>Terms</a>
+        and <a href="https://soundkitten.org/privacy" onclick={(e) => link(e, "https://soundkitten.org/privacy")}>Privacy Policy</a>.
+        SoundKitten isn't affiliated with SoundCloud, and doesn't collect or share your data.
+      </span>
+    </label>
+
+    <button class="login-btn" onclick={onLogin} disabled={!agreed}>Log in with SoundCloud</button>
     {#if status}
       <p class="status">{status}</p>
     {/if}
-    {#if showManualFallback}
-      <div class="fallback">
-        <p>If the login window didn't work, paste your <code>oauth_token</code> cookie value manually:</p>
-        <input type="password" placeholder="oauth_token value" bind:value={manualToken} />
-        <button onclick={() => onSubmitManualToken(manualToken)}>Save token</button>
-      </div>
-    {/if}
+    <a class="site-link" href="https://soundkitten.org" onclick={(e) => link(e, "https://soundkitten.org")}>soundkitten.org</a>
   </div>
 </div>
 
@@ -92,23 +93,51 @@
   background: var(--accent-hover);
 }
 
+.login-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.agree {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  max-width: 22rem;
+  margin-top: 0.75rem;
+  text-align: left;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.agree input {
+  margin-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.agree a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.agree a:hover {
+  color: var(--accent);
+}
+
 .status {
   color: var(--muted);
   max-width: 24rem;
 }
 
-.fallback {
-  margin-top: 1rem;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  max-width: 24rem;
+.site-link {
+  margin-top: 1.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: none;
 }
 
-.fallback input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 0.5em;
-  margin: 0.5em 0;
+.site-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
 }
 </style>

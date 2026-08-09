@@ -17,6 +17,14 @@ use std::io::Write;
 const API_V2: &str = "https://api-v2.soundcloud.com";
 const WEB_APP: &str = "https://soundcloud.com";
 
+fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max])
+    }
+}
+
 #[derive(Parser)]
 struct Args {
     /// Public track URL to test /resolve and streaming against
@@ -93,15 +101,22 @@ async fn run_oauth_checks(port: u16) -> Result<()> {
 
     let client = reqwest::Client::new();
 
-    check!(
+    let me = check!(
         "authed GET /me (official api.soundcloud.com)",
         oauth::authed_official_get(&client, "/me", &tokens.access_token).await
     );
+    let _my_id = me.as_ref().and_then(|v| v.get("id")).and_then(|v| v.as_i64());
 
-    check!(
+    let likes = check!(
         "authed GET /me/likes/tracks (official)",
         oauth::authed_official_get(&client, "/me/likes/tracks", &tokens.access_token).await
     );
+    let liked_track_id = likes
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|t| t.get("id"))
+        .and_then(|v| v.as_i64());
 
     check!(
         "authed GET /me/playlists (official)",
@@ -113,9 +128,274 @@ async fn run_oauth_checks(port: u16) -> Result<()> {
         oauth::authed_official_get(&client, "/me/tracks", &tokens.access_token).await
     );
 
+    // --- Phase 0 open questions from docs/oauth-migration.md ---
+    println!("\n--- Phase 0: migration open questions ---\n");
+
+    // Q3/Q4/Q5: does the official API expose the surface we actually need?
+    check!("GET /tracks?q=... (search)", async {
+        let (status, body) = oauth::official_get_raw(&client, "/tracks?q=lofi&limit=3", &tokens.access_token).await?;
+        if !status.is_success() {
+            bail!("{status}: {body}");
+        }
+        Ok(body)
+    }.await);
+
+    let track_check = check!("GET /tracks/{id} (streaming/transcoding data)", async {
+        let id = liked_track_id.context("no liked track available to test with (like a track first)")?;
+        let (status, body) = oauth::official_get_raw(&client, &format!("/tracks/{id}"), &tokens.access_token).await?;
+        if !status.is_success() {
+            bail!("{status}: {body}");
+        }
+        Ok(body)
+    }.await);
+    if let Some(track) = &track_check {
+        let has_stream_url = track.get("stream_url").is_some();
+        let has_media = track.get("media").is_some();
+        let streamable = track.get("streamable").and_then(|v| v.as_bool()).unwrap_or(false);
+        println!("    stream_url field present: {has_stream_url}, media field present: {has_media}, streamable: {streamable}");
+        if has_stream_url {
+            let stream_url = track.get("stream_url").and_then(|v| v.as_str()).unwrap_or_default();
+            let resolved = client
+                .get(stream_url)
+                .header("Authorization", format!("Bearer {}", tokens.access_token))
+                .send()
+                .await;
+            match resolved {
+                Ok(r) => println!("    following stream_url -> HTTP {} (redirects followed: {})", r.status(), r.url()),
+                Err(e) => println!("    following stream_url -> request failed: {e}"),
+            }
+        }
+    }
+
+    if let Some(id) = liked_track_id {
+        check!("GET /tracks/{id}/comments (official)", async {
+            let (status, body) = oauth::official_get_raw(&client, &format!("/tracks/{id}/comments"), &tokens.access_token).await?;
+            if !status.is_success() {
+                bail!("{status}: {body}");
+            }
+            Ok(body)
+        }.await);
+    } else {
+        total += 1;
+        println!("[{total}] GET /tracks/{{id}}/comments (official) ... SKIPPED (no liked track id available)");
+    }
+
+    check!("GET /me/followers (official)", oauth::authed_official_get(&client, "/me/followers", &tokens.access_token).await);
+    let followings = check!("GET /me/followings (official)", oauth::authed_official_get(&client, "/me/followings", &tokens.access_token).await);
+    let followed_user_id = followings
+        .as_ref()
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+        .and_then(|u| u.get("id"))
+        .and_then(|v| v.as_i64());
+
+    check!("GET /me/activities (official feed equivalent)", oauth::authed_official_get(&client, "/me/activities", &tokens.access_token).await);
+
+    // mixed-selections is a v2-web-app-specific endpoint, expected to 404 on the official host -- checking anyway rather than assuming
+    total += 1;
+    print!("[{total}] GET /mixed-selections (official, expected to NOT exist) ... ");
+    std::io::stdout().flush().ok();
+    match oauth::official_get_raw(&client, "/mixed-selections", &tokens.access_token).await {
+        Ok((status, _)) if status == 404 => {
+            println!("CONFIRMED ABSENT (404, as expected)");
+            passed += 1;
+        }
+        Ok((status, body)) => println!("UNEXPECTED: got {status} instead of 404: {body}"),
+        Err(e) => println!("request failed: {e:#}"),
+    }
+
+    // Q1: does official likes/follows bypass DataDome? Idempotent tests only
+    // (re-liking an already-liked track / re-following an already-followed
+    // user), so nothing changes even on success.
+    if let Some(id) = liked_track_id {
+        println!("\n    Trying several candidate paths for the official like-write endpoint (the guessed /me/favorites/{{id}} 405'd as \"unknown route\" last run, so the real path may differ or may not exist at all):");
+        for (method, path) in [
+            (reqwest::Method::PUT, format!("/me/favorites/{id}")),
+            (reqwest::Method::POST, format!("/me/favorites/{id}")),
+            (reqwest::Method::PUT, format!("/tracks/{id}/favoriters")),
+            (reqwest::Method::PUT, format!("/likes/tracks/{id}")),
+            (reqwest::Method::PUT, format!("/me/likes/tracks/{id}")),
+            (reqwest::Method::PUT, format!("/tracks/{id}/likers")),
+            (reqwest::Method::POST, format!("/tracks/{id}/likes")),
+            (reqwest::Method::PUT, format!("/me/favorites/tracks/{id}")),
+            (reqwest::Method::PUT, format!("/likes/{id}")),
+        ] {
+            match oauth::official_write(&client, method.clone(), &path, &tokens.access_token).await {
+                Ok((status, body)) => println!("      {method} {path} -> {status}: {}", truncate(&body.to_string(), 120)),
+                Err(e) => println!("      {method} {path} -> request failed: {e}"),
+            }
+        }
+        // POST with the track id in the body instead of the path, in case the
+        // real shape is "collection create" rather than a path-parameterized resource.
+        for (body_desc, form) in [
+            ("track_id form field", vec![("track_id", id.to_string())]),
+            ("id form field", vec![("id", id.to_string())]),
+        ] {
+            let resp = client
+                .post("https://api.soundcloud.com/me/likes/tracks")
+                .header("Authorization", format!("Bearer {}", tokens.access_token))
+                .form(&form)
+                .send()
+                .await;
+            match resp {
+                Ok(r) => println!("      POST /me/likes/tracks ({body_desc}) -> {}", r.status()),
+                Err(e) => println!("      POST /me/likes/tracks ({body_desc}) -> request failed: {e}"),
+            }
+        }
+        // OPTIONS on the known-working read path, to see what methods the
+        // server itself declares as valid there (Allow header), rather than
+        // guessing paths blind.
+        let opts = client
+            .request(reqwest::Method::OPTIONS, "https://api.soundcloud.com/me/likes/tracks")
+            .header("Authorization", format!("Bearer {}", tokens.access_token))
+            .send()
+            .await;
+        match opts {
+            Ok(r) => {
+                let allow = r.headers().get("Allow").and_then(|v| v.to_str().ok()).unwrap_or("<no Allow header>").to_string();
+                println!("      OPTIONS /me/likes/tracks -> {} , Allow: {allow}", r.status());
+            }
+            Err(e) => println!("      OPTIONS /me/likes/tracks -> request failed: {e}"),
+        }
+        total += 1;
+        passed += 1; // informational sweep, not a pass/fail check
+        println!("    (see above for results, this sweep doesn't count as pass/fail)\n");
+
+        // Targeted follow-up: POST/DELETE /likes/tracks/{track_urn} specifically.
+        // Not covered above, that sweep only tried PUT on /likes/tracks/{id}
+        // with a bare numeric id, never POST/DELETE, and never the URN form
+        // (soundcloud:tracks:<id>) SoundCloud uses as the canonical resource
+        // identifier elsewhere in their API.
+        let urn = track_check
+            .as_ref()
+            .and_then(|t| t.get("urn"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("soundcloud:tracks:{id}"));
+        println!("    Targeted check: POST/DELETE /likes/tracks/{{track_urn}} (urn = {urn}, track has urn field: {}):", track_check.as_ref().and_then(|t| t.get("urn")).is_some());
+
+        let urn_encoded = urn.replace(':', "%3A");
+        for path in [
+            format!("/likes/tracks/{id}"),
+            format!("/likes/tracks/{urn}"),
+            format!("/likes/tracks/{urn_encoded}"),
+        ] {
+            match oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await {
+                Ok((status, body)) => {
+                    println!("      POST {path} -> {status}: {}", truncate(&body.to_string(), 150));
+                    if status.is_success() {
+                        // Real endpoint. Confirm DELETE (unlike) works, then
+                        // immediately restore the like so account state ends
+                        // up unchanged from before this run.
+                        let del = oauth::official_write(&client, reqwest::Method::DELETE, &path, &tokens.access_token).await;
+                        match &del {
+                            Ok((s, b)) => println!("      DELETE {path} -> {s}: {}", truncate(&b.to_string(), 150)),
+                            Err(e) => println!("      DELETE {path} -> request failed: {e}"),
+                        }
+                        let restore = oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await;
+                        println!("      restore POST {path} -> {:?}", restore.map(|(s, _)| s));
+                    }
+                }
+                Err(e) => println!("      POST {path} -> request failed: {e}"),
+            }
+        }
+        println!();
+    } else {
+        total += 1;
+        println!("[{total}] like-endpoint sweep ... SKIPPED (no existing like to target)");
+    }
+
+    // Playlist likes: same documented shape (POST/DELETE /likes/playlists/{playlist_urn}),
+    // confirming it actually behaves the same as the now-confirmed track-like endpoint
+    // rather than assuming it does just because the docs list it identically.
+    let playlists = check!(
+        "authed GET /me/playlists (for playlist-like check)",
+        oauth::authed_official_get(&client, "/me/playlists", &tokens.access_token).await
+    );
+    if let Some(playlist_id) = playlists.as_ref().and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|p| p.get("id")).and_then(|v| v.as_i64()) {
+        let path = format!("/likes/playlists/{playlist_id}");
+        println!("    Targeted check: POST/DELETE {path} (playlist likes):");
+        match oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await {
+            Ok((status, body)) => {
+                println!("      POST {path} -> {status}: {}", truncate(&body.to_string(), 150));
+                if status.is_success() {
+                    let del = oauth::official_write(&client, reqwest::Method::DELETE, &path, &tokens.access_token).await;
+                    match &del {
+                        Ok((s, b)) => println!("      DELETE {path} -> {s}: {}", truncate(&b.to_string(), 150)),
+                        Err(e) => println!("      DELETE {path} -> request failed: {e}"),
+                    }
+                    let restore = oauth::official_write(&client, reqwest::Method::POST, &path, &tokens.access_token).await;
+                    println!("      restore POST {path} -> {:?}", restore.map(|(s, _)| s));
+                }
+            }
+            Err(e) => println!("      POST {path} -> request failed: {e}"),
+        }
+        println!();
+    } else {
+        println!("    (no playlist available to test playlist-like endpoint)\n");
+    }
+
+    // Known-public account used only to test whether a follow WRITE endpoint
+    // exists at all. If any candidate succeeds, immediately unfollow again to
+    // avoid leaving a new, unwanted follow relationship behind.
+    let follow_test_target = followed_user_id.unwrap_or(991556812);
+    println!("    Trying several candidate paths for the official follow-write endpoint (target user id {follow_test_target}{}):", if followed_user_id.is_some() { ", an existing following" } else { ", NOT currently followed, will clean up if any candidate succeeds" });
+    for (method, path) in [
+        (reqwest::Method::PUT, format!("/me/followings/{follow_test_target}")),
+        (reqwest::Method::POST, format!("/me/followings/{follow_test_target}")),
+        (reqwest::Method::PUT, format!("/users/{follow_test_target}/followers")),
+    ] {
+        match oauth::official_write(&client, method.clone(), &path, &tokens.access_token).await {
+            Ok((status, body)) => {
+                println!("      {method} {path} -> {status}: {}", truncate(&body.to_string(), 120));
+                if status.is_success() && followed_user_id.is_none() {
+                    let cleanup = oauth::official_write(&client, reqwest::Method::DELETE, &path, &tokens.access_token).await;
+                    println!("      cleanup DELETE {path} -> {:?}", cleanup.map(|(s, _)| s));
+                }
+            }
+            Err(e) => println!("      {method} {path} -> request failed: {e}"),
+        }
+    }
+    total += 1;
+    passed += 1;
+    println!("    (see above for results, this sweep doesn't count as pass/fail)\n");
+
+    // Q6: can the official access_token be used against the UNOFFICIAL api-v2 host?
+    check!("official access_token against unofficial api-v2.soundcloud.com", async {
+        let client_id_v2 = scrape_client_id(&client).await.context("scraping unofficial client_id for this check")?;
+        let (status, body) = oauth::try_official_token_on_unofficial_api(&client, &tokens.access_token, &client_id_v2).await?;
+        if !status.is_success() {
+            bail!("{status}: {body}");
+        }
+        Ok(body)
+    }.await);
+
+    // Q2: is client_secret actually enforced, or would PKCE alone have been enough?
+    if !tokens.refresh_token.is_empty() {
+        total += 1;
+        print!("[{total}] refresh_token exchange WITHOUT client_secret (is it actually enforced?) ... ");
+        std::io::stdout().flush().ok();
+        let resp = client
+            .post("https://secure.soundcloud.com/oauth/token")
+            .form(&[("grant_type", "refresh_token"), ("client_id", &client_id), ("refresh_token", &tokens.refresh_token)])
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                println!("ACCEPTED without a secret -- client_secret is NOT strictly enforced here");
+                passed += 1;
+            }
+            Ok(r) => {
+                println!("REJECTED ({}) -- client_secret appears to be required", r.status());
+                passed += 1; // this is a valid, informative answer either way
+            }
+            Err(e) => println!("request failed: {e:#}"),
+        }
+    }
+
     if !tokens.refresh_token.is_empty() {
         let refreshed = check!(
-            "refresh_token exchange for a new access_token",
+            "refresh_token exchange for a new access_token (normal, with secret)",
             oauth::refresh_tokens(&client_id, &client_secret, &tokens.refresh_token).await
         );
         if let Some(r) = refreshed {
@@ -126,9 +406,49 @@ async fn run_oauth_checks(port: u16) -> Result<()> {
         println!("[{total}] refresh_token exchange ... SKIPPED (no refresh_token returned)");
     }
 
+    // End-to-end test of the deployed oauth-proxy (services/oauth-proxy, now
+    // running as a Node service on node1 behind auth.soundkitten.org): does
+    // the SAME refresh_token, sent through the public proxy instead of
+    // directly to SoundCloud, come back with a valid access_token? This is
+    // the one thing the proxy's own negative tests (405/401/400 checks)
+    // couldn't prove, since none of them reach the code path that actually
+    // reads SC_CLIENT_ID/SC_CLIENT_SECRET from the container's environment
+    // and forwards to SoundCloud. Never prints the refresh_token or the
+    // resulting access_token, only whether one came back.
+    if !tokens.refresh_token.is_empty() {
+        if let Ok(proxy_key) = std::env::var("PROXY_ACCESS_KEY") {
+            total += 1;
+            print!("[{total}] refresh_token exchange via deployed oauth-proxy (auth.soundkitten.org) ... ");
+            std::io::stdout().flush().ok();
+            let resp = client
+                .post("https://auth.soundkitten.org/token/refresh")
+                .header("x-soundkitten-key", &proxy_key)
+                .json(&serde_json::json!({ "refresh_token": tokens.refresh_token }))
+                .send()
+                .await;
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    let body: Value = r.json().await.unwrap_or(Value::Null);
+                    let has_access_token = body.get("access_token").and_then(|v| v.as_str()).is_some();
+                    if status.is_success() && has_access_token {
+                        println!("PASS (proxy forwarded to SoundCloud and returned a valid access_token)");
+                        passed += 1;
+                    } else {
+                        println!("FAIL: {status}, access_token present: {has_access_token}");
+                    }
+                }
+                Err(e) => println!("FAIL: request failed: {e:#}"),
+            }
+        } else {
+            total += 1;
+            println!("[{total}] refresh_token exchange via deployed oauth-proxy ... SKIPPED (PROXY_ACCESS_KEY not set)");
+        }
+    }
+
     println!("\n=== {passed}/{total} official-API checks passed ===");
     println!("\nNOTE: download-endpoint availability on the official API still needs manual verification");
-    println!("against a track you have download rights to — not yet automated here.");
+    println!("against a track you have download rights to, not yet automated here.");
     if passed < total {
         std::process::exit(1);
     }

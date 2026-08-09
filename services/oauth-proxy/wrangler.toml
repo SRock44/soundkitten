@@ -1,0 +1,13 @@
+name = "soundkitten-oauth-proxy"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+# Suggested: route this at auth.soundkitten.org, alongside the existing
+# updates.soundkitten.org infrastructure. Configure via the Cloudflare
+# dashboard (Workers & Pages > this worker > Triggers > Custom Domains)
+# or add a [[routes]] entry here once the domain is on Cloudflare.
+
+# Secrets (never set here, never committed):
+#   wrangler secret put SC_CLIENT_ID
+#   wrangler secret put SC_CLIENT_SECRET
+#   wrangler secret put WORKER_ACCESS_KEY

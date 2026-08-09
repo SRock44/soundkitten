@@ -1,32 +1,54 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { api } from "../api";
   import { following } from "../stores/following.svelte";
+  import { officialAuth } from "../stores/officialAuth.svelte";
   import Icon from "./Icon.svelte";
 
-  let { userId, permalinkUrl }: { userId: number; permalinkUrl: string | null } = $props();
+  let { userId, permalinkUrl, compact = false }: { userId: number; permalinkUrl: string | null; compact?: boolean } = $props();
 
   let isFollowing = $derived(following.has(userId));
+  let busy = $state(false);
 
-  // SoundCloud's follow/unfollow endpoint is behind DataDome bot-protection
-  // and consistently 403s even with a valid oauth token (confirmed live) --
-  // so this button can only reflect real follow state, not change it. It
-  // sends the user to soundcloud.com to actually follow/unfollow, the same
-  // graceful-degradation pattern used for DRM-locked tracks.
-  function openOnSoundCloud(e: MouseEvent) {
+  // Unofficial-API follow writes are DataDome-blocked (confirmed live), but
+  // official OAuth's /me/followings/{id} works cleanly -- see
+  // docs/oauth-migration.md. Connects lazily on first use rather than
+  // upfront, and falls back to opening soundcloud.com if the user declines
+  // to connect or the write itself fails for any reason, same
+  // graceful-degradation pattern as before this existed.
+  async function toggleFollow(e: MouseEvent) {
     e.stopPropagation();
-    if (permalinkUrl) openUrl(permalinkUrl);
+    if (busy) return;
+    busy = true;
+    const next = !isFollowing;
+    try {
+      const connected = await officialAuth.ensureConnected();
+      if (!connected) {
+        if (permalinkUrl) openUrl(permalinkUrl);
+        return;
+      }
+      if (next) await api.followUserV2(userId);
+      else await api.unfollowUserV2(userId);
+      following.set(userId, next);
+    } catch {
+      if (permalinkUrl) openUrl(permalinkUrl);
+    } finally {
+      busy = false;
+    }
   }
 </script>
 
 <button
   class="follow-btn"
+  class:compact
   class:following={isFollowing}
-  onclick={openOnSoundCloud}
-  disabled={!permalinkUrl}
-  title={isFollowing ? "Unfollow on soundcloud.com" : "Follow on soundcloud.com"}
+  onclick={toggleFollow}
+  disabled={busy || (!permalinkUrl && !officialAuth.connected)}
+  aria-label={isFollowing ? "Unfollow" : "Follow"}
+  title={isFollowing ? "Unfollow" : "Follow"}
 >
-  <Icon name={isFollowing ? "user-filled" : "user"} size={14} />
-  <span>{isFollowing ? "Following" : "Follow"}</span>
+  <Icon name={isFollowing ? "user-filled" : "user"} size={compact ? 15 : 14} />
+  {#if !compact}<span>{isFollowing ? "Following" : "Follow"}</span>{/if}
 </button>
 
 <style>
@@ -64,5 +86,27 @@
 .follow-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.follow-btn.compact {
+  padding: 0.3rem;
+  border: none;
+  border-radius: 4px;
+  color: #a0a0a0;
+}
+
+.follow-btn.compact:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: transparent;
+}
+
+.follow-btn.compact.following {
+  background: none;
+  color: var(--accent);
+}
+
+.follow-btn.compact.following:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 </style>

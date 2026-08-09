@@ -1,9 +1,29 @@
-//! Login flow: embedded webview -> extract oauth_token cookie -> OS keychain.
-//! Falls back to a manual-token-paste command when cookie extraction fails.
+//! Primary login: embedded webview -> extract oauth_token cookie -> OS
+//! keychain. This is the exact mechanism that's worked since 0.1.0.
+//!
+//! An earlier version of this file tried pointing the same webview at
+//! SoundCloud's official /authorize page instead, hoping to capture the
+//! official OAuth authorization code from the same screen (one login for
+//! everything). Tried twice, live, and failed both times: the oauth_token
+//! cookie this relies on never appeared, regardless of which cookie origin
+//! was checked, for reasons that weren't diagnosable without direct
+//! webview devtools access. Reverted rather than keep guessing against a
+//! mechanism that's now failed twice under real testing.
+//!
+//! Instead: primary login stays exactly as it always was (proven), and on
+//! success, automatically kicks off official_oauth::start_official_login
+//! (an embedded popup window, see that module) right after, so it reads as
+//! one continuous onboarding moment instead of a separately-discovered
+//! "connect" action later, without touching primary login's own mechanism.
+//! Its outcome is reported via `official_auth:result` so the frontend
+//! knows immediately whether it's actually connected, rather than only
+//! finding out the next time it happens to check.
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+use crate::official_oauth;
 
 const KEYRING_SERVICE: &str = "com.soundkitten.app";
 const KEYRING_USER: &str = "oauth_token";
@@ -42,19 +62,6 @@ pub fn logout() -> Result<(), String> {
     Ok(())
 }
 
-/// Manual fallback: user pastes their oauth_token cookie value directly.
-#[tauri::command]
-pub fn set_manual_token(token: String) -> Result<(), String> {
-    let token = token.trim();
-    if token.is_empty() {
-        return Err("token was empty".into());
-    }
-    store_token(token).map_err(|e| e.to_string())
-}
-
-/// Opens a login window pointed at soundcloud.com, polls the webview's cookie
-/// jar until an oauth_token cookie appears (i.e. the user finished logging in),
-/// stores it, closes the window, and emits `auth:result` to the frontend.
 #[tauri::command]
 pub async fn start_login(app: AppHandle) -> Result<(), String> {
     if app.get_webview_window(LOGIN_WINDOW_LABEL).is_some() {
@@ -97,9 +104,31 @@ pub async fn start_login(app: AppHandle) -> Result<(), String> {
                     let token = token_cookie.value().to_string();
                     match store_token(&token) {
                         Ok(()) => emit_result(&app_for_poll, true, None),
-                        Err(e) => emit_result(&app_for_poll, false, Some(format!("failed to store token: {e}"))),
+                        Err(e) => {
+                            emit_result(&app_for_poll, false, Some(format!("failed to store token: {e}")));
+                            close_login_window(&app_for_poll);
+                            return;
+                        }
                     }
                     close_login_window(&app_for_poll);
+
+                    // Primary login just succeeded. Automatically continue
+                    // into the official OAuth connect popup right away,
+                    // best-effort, so the user encounters it as part of one
+                    // onboarding moment instead of separately discovering
+                    // it later on first like or follow. Doesn't affect
+                    // primary login, which already reported success above
+                    // either way. The frontend's officialAuth store listens
+                    // for this event to update its connected state right
+                    // away, instead of only learning about it on next
+                    // launch -- without this, a successful onboarding
+                    // connect would still prompt again on the very first
+                    // like or follow.
+                    let app_for_official = app_for_poll.clone();
+                    tauri::async_runtime::spawn(async move {
+                        let ok = official_oauth::start_official_login(app_for_official.clone()).await.is_ok();
+                        let _ = app_for_official.emit("official_auth:result", ok);
+                    });
                     return;
                 }
             }

@@ -14,6 +14,7 @@
   import SyncStatusBar from "$lib/components/SyncStatusBar.svelte";
   import { likes as likesStore } from "$lib/stores/likes.svelte";
   import { following as followingStore } from "$lib/stores/following.svelte";
+  import { officialAuth } from "$lib/stores/officialAuth.svelte";
   import { player } from "$lib/stores/player.svelte";
   import { syncStatus } from "$lib/stores/syncStatus.svelte";
   import { checkForUpdates } from "$lib/updater";
@@ -26,7 +27,6 @@
   let loggedIn = $state(false);
   let authChecked = $state(false);
   let authStatus = $state("");
-  let showManualFallback = $state(false);
   let me = $state<Profile | null>(null);
 
   let view = $state<View>("home");
@@ -77,6 +77,7 @@
     pushHistory();
     view = "playlists";
     openPlaylist = p;
+    selectedTrack = null;
     loadError = "";
     if (p.tracks.length > 0) return; // already hydrated
     openPlaylistLoading = true;
@@ -102,6 +103,7 @@
       tracks: [],
     };
     openPlaylist = shell;
+    selectedTrack = null;
     loadError = "";
     openPlaylistLoading = true;
     try {
@@ -130,6 +132,8 @@
     loggedIn = await api.isLoggedIn();
     authChecked = true;
     if (!loggedIn) return;
+
+    officialAuth.refresh(); // cheap local keychain check, not worth blocking on
 
     const cachedMe = loadCached<Profile>("me");
     if (cachedMe) me = cachedMe.value;
@@ -239,23 +243,10 @@
 
   async function onLogin() {
     authStatus = "Opening SoundCloud login...";
-    showManualFallback = false;
     try {
       await api.startLogin();
     } catch (e) {
       authStatus = `Failed to open login window: ${e}`;
-      showManualFallback = true;
-    }
-  }
-
-  async function onSubmitManualToken(token: string) {
-    try {
-      await api.setManualToken(token);
-      showManualFallback = false;
-      authStatus = "Manual token saved.";
-      await refreshAuth();
-    } catch (e) {
-      authStatus = `Failed to save token: ${e}`;
     }
   }
 
@@ -278,6 +269,7 @@
     pushHistory();
     profileUserId = userId;
     view = "profile";
+    selectedTrack = null;
   }
 
   async function navigate(v: View) {
@@ -287,6 +279,7 @@
     if (v !== view) pushHistory();
     view = v;
     openPlaylist = null;
+    selectedTrack = null;
     if (v !== "profile") profileUserId = null;
     loadError = "";
     if (v === "home") {
@@ -334,14 +327,16 @@
     if (focused) syncLikesIfChanged();
   });
   listen<AuthEvent>("auth:result", async (event) => {
-    if (event.payload.ok) {
-      authStatus = "";
-      showManualFallback = false;
-    } else {
-      authStatus = `Login failed: ${event.payload.error ?? "unknown error"}`;
-      showManualFallback = true;
-    }
+    authStatus = event.payload.ok ? "" : `Login failed: ${event.payload.error ?? "unknown error"}`;
     await refreshAuth();
+  });
+  // Fires once the auto-chained official OAuth connect (right after
+  // primary login) finishes in the background. Without this, a successful
+  // onboarding connect would go unnoticed by the frontend until the app
+  // was relaunched, so the very first like or follow would prompt again
+  // for no reason.
+  listen<boolean>("official_auth:result", (event) => {
+    officialAuth.connected = event.payload;
   });
 </script>
 
@@ -350,7 +345,7 @@
 {#if !authChecked}
   <div class="boot"></div>
 {:else if !loggedIn}
-  <LoginScreen onLogin={onLogin} status={authStatus} {showManualFallback} {onSubmitManualToken} />
+  <LoginScreen onLogin={onLogin} status={authStatus} />
 {:else}
   <div class="app">
     <TopNav
@@ -528,6 +523,15 @@
 :global(*) {
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* No visible focus ring anywhere -- this app is mouse-driven, and the
+   default ring made tabbing (and Space, which both toggles playback via
+   the global handler AND activates whatever button happens to be
+   focused) look and feel broken. Losing the keyboard-accessibility
+   affordance is a deliberate tradeoff here, not an oversight. */
+:global(*:focus) {
+  outline: none;
 }
 
 :global(*::-webkit-scrollbar) {

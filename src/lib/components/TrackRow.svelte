@@ -40,6 +40,11 @@
     if (playable) player.play(track, queue);
   }
 
+  // Enter only, not Space, below: Space is the global play/pause shortcut
+  // (PlayerBar's window-level handler). Handling it here too meant a
+  // focused row would both re-trigger play() on itself and toggle pause
+  // globally for the same keypress.
+
   let menuPos = $state<{ x: number; y: number } | null>(null);
 
   function openMenu(e: MouseEvent) {
@@ -72,7 +77,7 @@
   role="button"
   tabindex="0"
   onclick={handleRowClick}
-  onkeydown={(e) => (e.key === "Enter" || e.key === " ") && handleRowClick()}
+  onkeydown={(e) => e.key === "Enter" && handleRowClick()}
   oncontextmenu={openMenu}
 >
   {#if index !== undefined}
