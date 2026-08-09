@@ -5,7 +5,7 @@ use serde::Serialize;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-const KEYRING_SERVICE: &str = "com.example.soundcloud-desktop";
+const KEYRING_SERVICE: &str = "com.soundkitten.app";
 const KEYRING_USER: &str = "oauth_token";
 const LOGIN_WINDOW_LABEL: &str = "sc-login";
 
