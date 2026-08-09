@@ -33,6 +33,18 @@ export const api = {
   setClientIdOverride: (id: string) => invoke<void>("set_client_id_override", { id }),
   clearClientIdOverride: () => invoke<void>("clear_client_id_override"),
   getClientIdOverride: () => invoke<string | null>("get_client_id_override"),
+
+  // Official OAuth (second, optional login), used only for real in-app
+  // like/follow writes, which are DataDome-blocked on the unofficial API.
+  isOfficialConnected: () => invoke<boolean>("is_official_connected"),
+  startOfficialLogin: () => invoke<void>("start_official_login"),
+  disconnectOfficialLogin: () => invoke<void>("disconnect_official_login"),
+  likeTrackV2: (trackId: number) => invoke<void>("sc_like_track_v2", { trackId }),
+  unlikeTrackV2: (trackId: number) => invoke<void>("sc_unlike_track_v2", { trackId }),
+  likePlaylistV2: (playlistId: number) => invoke<void>("sc_like_playlist_v2", { playlistId }),
+  unlikePlaylistV2: (playlistId: number) => invoke<void>("sc_unlike_playlist_v2", { playlistId }),
+  followUserV2: (userId: number) => invoke<void>("sc_follow_user_v2", { userId }),
+  unfollowUserV2: (userId: number) => invoke<void>("sc_unfollow_user_v2", { userId }),
 };
 
 export function streamUrl(trackId: number): string {

@@ -14,6 +14,7 @@
   import SyncStatusBar from "$lib/components/SyncStatusBar.svelte";
   import { likes as likesStore } from "$lib/stores/likes.svelte";
   import { following as followingStore } from "$lib/stores/following.svelte";
+  import { officialAuth } from "$lib/stores/officialAuth.svelte";
   import { player } from "$lib/stores/player.svelte";
   import { syncStatus } from "$lib/stores/syncStatus.svelte";
   import { checkForUpdates } from "$lib/updater";
@@ -130,6 +131,8 @@
     loggedIn = await api.isLoggedIn();
     authChecked = true;
     if (!loggedIn) return;
+
+    officialAuth.refresh(); // cheap local keychain check, not worth blocking on
 
     const cachedMe = loadCached<Profile>("me");
     if (cachedMe) me = cachedMe.value;

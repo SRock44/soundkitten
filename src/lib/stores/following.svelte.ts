@@ -1,8 +1,9 @@
 /** Tracks which user ids the current user follows, mirroring the `likes`
- * store's pattern. Read-only against the real SoundCloud API -- follow
- * writes are blocked by SoundCloud's DataDome bot-protection (see
- * src-tauri/src/soundcloud/api.rs), so this only ever reflects what was
- * true at last seed, never a locally-faked toggle. */
+ * store's pattern. Seeded from the real (read-only) SoundCloud API, and
+ * updated locally by `set()` when a follow/unfollow write succeeds via
+ * official OAuth (see FollowButton.svelte); unofficial-API follow writes
+ * are blocked by SoundCloud's DataDome bot-protection (see
+ * src-tauri/src/soundcloud/api.rs) and never reach this store. */
 class FollowingStore {
   ids = $state(new Set<number>());
 
@@ -12,6 +13,13 @@ class FollowingStore {
 
   has(userId: number): boolean {
     return this.ids.has(userId);
+  }
+
+  set(userId: number, following: boolean) {
+    const next = new Set(this.ids);
+    if (following) next.add(userId);
+    else next.delete(userId);
+    this.ids = next;
   }
 }
 

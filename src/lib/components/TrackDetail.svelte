@@ -2,6 +2,7 @@
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
   import { likes } from "../stores/likes.svelte";
+  import { officialAuth } from "../stores/officialAuth.svelte";
   import { formatDuration, handleOf, isPlayable } from "../types";
   import type { Comment, Track } from "../types";
   import Icon from "./Icon.svelte";
@@ -36,18 +37,30 @@
       .finally(() => (commentsLoading = false));
   });
 
+  // Unofficial-API like writes are DataDome-blocked (confirmed live), but
+  // official OAuth's /likes/tracks/{id} works cleanly -- see
+  // docs/oauth-migration.md. Connects lazily on first use rather than
+  // upfront, and falls back to opening the track on soundcloud.com if the
+  // user declines to connect, same graceful-degradation pattern as
+  // FollowButton.
   async function toggleLike() {
     if (likeBusy) return;
     likeBusy = true;
     const next = !isLiked;
     try {
-      if (next) await api.likeTrack(track.id);
-      else await api.unlikeTrack(track.id);
+      const connected = await officialAuth.ensureConnected();
+      if (!connected) {
+        if (track.permalink_url) openUrl(track.permalink_url);
+        return;
+      }
+      if (next) await api.likeTrackV2(track.id);
+      else await api.unlikeTrackV2(track.id);
       likes.set(track.id, next);
     } catch (e) {
       commentsError = `Failed to ${next ? "like" : "unlike"} track: ${e}`;
+    } finally {
+      likeBusy = false;
     }
-    likeBusy = false;
   }
 
   async function toggleRepost() {

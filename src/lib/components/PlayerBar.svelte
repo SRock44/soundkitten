@@ -2,6 +2,7 @@
   import { player } from "../stores/player.svelte";
   import { api } from "../api";
   import { likes } from "../stores/likes.svelte";
+  import { officialAuth } from "../stores/officialAuth.svelte";
   import { formatDuration } from "../types";
   import type { Track } from "../types";
   import Icon from "./Icon.svelte";
@@ -30,24 +31,31 @@
   let progressPct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
   let isLiked = $derived(player.current ? likes.has(player.current.id) : false);
 
+  // Unofficial-API like writes are DataDome-blocked (confirmed live), but
+  // official OAuth's /likes/tracks/{id} works cleanly -- see
+  // docs/oauth-migration.md. Connects lazily on first use, falling back to
+  // opening the track on soundcloud.com if the user declines to connect.
   async function toggleLike() {
     const track = player.current;
     if (!track || likeBusy) return;
     likeBusy = true;
     const next = !likes.has(track.id);
     try {
-      if (next) await api.likeTrack(track.id);
-      else await api.unlikeTrack(track.id);
+      const connected = await officialAuth.ensureConnected();
+      if (!connected) {
+        openOnSoundCloud();
+        return;
+      }
+      if (next) await api.likeTrackV2(track.id);
+      else await api.unlikeTrackV2(track.id);
       likes.set(track.id, next);
     } catch (e) {
       player.error = `Failed to ${next ? "like" : "unlike"} track: ${e}`;
+    } finally {
+      likeBusy = false;
     }
-    likeBusy = false;
   }
 
-  // Temporary workaround while liking is blocked by SoundCloud's DataDome
-  // bot-protection (see backend commit) -- opens the track on soundcloud.com
-  // so the user can like it there instead. Remove once the block clears.
   function openOnSoundCloud() {
     if (!player.current?.permalink_url) return;
     openUrl(player.current.permalink_url);
