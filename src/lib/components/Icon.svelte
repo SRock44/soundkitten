@@ -24,7 +24,13 @@
     | "maximize"
     | "restore"
     | "lock"
-    | "external-link";
+    | "external-link"
+    | "share"
+    | "check"
+    | "shuffle"
+    | "repeat"
+    | "user"
+    | "user-filled";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -108,5 +114,29 @@
     <path d="M8 5H4.5a1 1 0 0 0-1 1v9.5a1 1 0 0 0 1 1H14a1 1 0 0 0 1-1V12" />
     <path d="M10 3.5h6.5V10" />
     <line x1="16.5" y1="3.5" x2="9" y2="11" />
+  {:else if name === "share"}
+    <circle cx="15" cy="5" r="2.2" />
+    <circle cx="15" cy="15" r="2.2" />
+    <circle cx="5" cy="10" r="2.2" />
+    <line x1="7" y1="8.8" x2="13" y2="6.2" />
+    <line x1="7" y1="11.2" x2="13" y2="13.8" />
+  {:else if name === "check"}
+    <polyline points="4.5 10.5 8 14 15.5 6" />
+  {:else if name === "shuffle"}
+    <polyline points="12.5 3.5 16.5 3.5 16.5 7.5" />
+    <line x1="4" y1="16" x2="16.5" y2="3.5" />
+    <path d="M4 4h2.5l3 4" />
+    <path d="M9.5 12l3 4h4" />
+  {:else if name === "repeat"}
+    <path d="M4 7.5h9a3 3 0 0 1 3 3v1" />
+    <polyline points="10.5 4.5 13.5 7.5 10.5 10.5" />
+    <path d="M16 12.5H7a3 3 0 0 1-3-3v-1" />
+    <polyline points="9.5 15.5 6.5 12.5 9.5 9.5" />
+  {:else if name === "user"}
+    <circle cx="10" cy="6.5" r="3" />
+    <path d="M4 16.5a6 6 0 0 1 12 0" />
+  {:else if name === "user-filled"}
+    <circle cx="10" cy="6.5" r="3" fill="currentColor" stroke="none" />
+    <path d="M4 16.5a6 6 0 0 1 12 0" fill="currentColor" stroke="none" />
   {/if}
 </svg>

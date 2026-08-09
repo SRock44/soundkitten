@@ -4,6 +4,7 @@
   import { player } from "../stores/player.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
+  import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
   let {
     track,
@@ -57,6 +58,9 @@
     ...(onOpenTrack ? [{ label: "View track", onSelect: () => onOpenTrack!(track) }] : []),
     ...(track.user && onOpenProfile
       ? [{ label: "Go to artist", onSelect: () => onOpenProfile!(track.user!.id) }]
+      : []),
+    ...(track.permalink_url
+      ? [{ label: "Copy link", onSelect: () => writeText(track.permalink_url!) }]
       : []),
   ]);
 </script>

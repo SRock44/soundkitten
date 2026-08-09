@@ -5,6 +5,7 @@
   import { formatDuration, handleOf, isPlayable } from "../types";
   import type { Comment, Track } from "../types";
   import Icon from "./Icon.svelte";
+  import ShareButton from "./ShareButton.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
   let { track, onBack, onOpenProfile }: { track: Track; onBack: () => void; onOpenProfile: (id: number) => void } = $props();
@@ -122,6 +123,7 @@
   </button>
   <span class="stat"><Icon name="comment" size={14} /> {track.comment_count ?? comments.length}</span>
   {#if track.playback_count}<span class="stat"><Icon name="playback" size={12} /> {track.playback_count.toLocaleString()}</span>{/if}
+  <ShareButton url={track.permalink_url} />
 </div>
 
 {#if commentsError}
