@@ -144,7 +144,7 @@
     {#each comments as c}
       <div class="comment">
         {#if c.user?.avatar_url}
-          <img src={c.user.avatar_url} alt="" class="comment-avatar" />
+          <img src={c.user.avatar_url} alt="" class="comment-avatar" loading="lazy" />
         {:else}
           <div class="comment-avatar avatar-fallback">{(c.user?.username ?? "?")[0]?.toUpperCase()}</div>
         {/if}

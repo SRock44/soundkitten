@@ -36,7 +36,7 @@
         {#each users as u}
           <button class="row" onclick={() => { onOpenProfile(u.id); onClose(); }}>
             {#if u.avatar_url}
-              <img src={u.avatar_url} alt="" class="avatar" />
+              <img src={u.avatar_url} alt="" class="avatar" loading="lazy" />
             {:else}
               <div class="avatar avatar-fallback">{(u.username ?? "?")[0]?.toUpperCase()}</div>
             {/if}

@@ -167,7 +167,7 @@
             {#each playlists as p}
               <div class="playlist-card">
                 {#if p.artwork_url}
-                  <img src={p.artwork_url} alt="" />
+                  <img src={p.artwork_url} alt="" loading="lazy" />
                 {:else}
                   <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
                 {/if}
@@ -193,7 +193,7 @@
             {#each followings.slice(0, 5) as f}
               <button class="mini-row" onclick={() => onOpenProfile(f.id)}>
                 {#if f.avatar_url}
-                  <img src={f.avatar_url} alt="" class="mini-avatar" />
+                  <img src={f.avatar_url} alt="" class="mini-avatar" loading="lazy" />
                 {:else}
                   <div class="mini-avatar avatar-fallback">{(f.username ?? "?")[0]?.toUpperCase()}</div>
                 {/if}
