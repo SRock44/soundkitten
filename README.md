@@ -28,10 +28,6 @@ SoundCloud's official desktop app is an Electron wrapper with a sluggish UI and 
 - Clean, native window chrome — no bundled browser UI, no bloat
 - Auto-updates, checked on launch (opt-in per update, never silent)
 
-## Screenshots
-
-<!-- TODO: add screenshots -->
-
 ## Download
 
 Grab the latest installer for your platform from [Releases](../../releases). Windows (`.msi`/`.exe`), macOS (`.dmg`, Apple Silicon and Intel), and Linux (`.AppImage`/`.deb`) builds are published there.
