@@ -3,7 +3,7 @@
 //! so a raw, time-limited CDN URL never has to round-trip through the frontend.
 
 use super::api;
-use super::models::{Comment, Playlist, Profile, Track, UserComment};
+use super::models::{Comment, Playlist, Profile, Selection, Track, UserComment};
 use crate::auth::get_stored_token;
 
 fn require_token() -> Result<String, String> {
@@ -148,6 +148,24 @@ pub async fn sc_user_playlists(user_id: i64) -> Result<Vec<Playlist>, String> {
 }
 
 #[tauri::command]
+pub async fn sc_mixed_selections() -> Result<Vec<Selection>, String> {
+    let client = http_client();
+    api::get_mixed_selections(&client, get_stored_token().as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Hydrates a SoundCloud-generated system playlist ("Your Mix N", etc) by
+/// batch-fetching full track data for its id stubs.
+#[tauri::command]
+pub async fn sc_system_playlist_tracks(track_ids: Vec<i64>) -> Result<Vec<Track>, String> {
+    let client = http_client();
+    api::get_tracks_by_ids(&client, &track_ids, get_stored_token().as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn sc_playlist(playlist_id: i64) -> Result<Playlist, String> {
     let client = http_client();
     api::get_playlist(&client, playlist_id, get_stored_token().as_deref())
@@ -169,6 +187,12 @@ pub async fn sc_user_followings(user_id: i64) -> Result<Vec<Profile>, String> {
     api::get_user_followings(&client, user_id, get_stored_token().as_deref())
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sc_my_followings_ids() -> Result<Vec<i64>, String> {
+    let token = require_token()?;
+    api::get_my_followings_ids(&http_client(), &token).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -66,6 +66,18 @@ pub struct FollowersResponse {
     pub collection: Vec<Profile>,
 }
 
+/// GET /users/{id}/followings/ids -- a lightweight id-only listing (no
+/// per-follow Profile hydration) confirmed live via SoundCloud's own web
+/// bundle, which uses this exact route for the same purpose we do: checking
+/// "do I follow this person" cheaply, without needing a boolean field on
+/// `/users/{id}` itself (it doesn't have one).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FollowingIdsResponse {
+    #[serde(default)]
+    pub collection: Vec<i64>,
+    pub next_href: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserCommentsResponse {
     #[serde(default)]
@@ -194,6 +206,129 @@ pub struct Playlist {
     pub track_count: Option<i64>,
     #[serde(default)]
     pub tracks: Vec<Track>,
+}
+
+/// SoundCloud's generated/algorithmic sets ("Your Mix N", "Related tracks:
+/// ...", weekly mood mixes, etc), as returned inside `/mixed-selections`.
+/// These are NOT real playlists -- their `id` is a string urn like
+/// `soundcloud:system-playlists:your-moods:255334580:1`, not an integer, and
+/// there is no `/playlists/{id}` resource for them (confirmed live: that
+/// 404s). Their `tracks` array only contains id stubs, not full track data,
+/// so hydrating one requires a separate batch `/tracks?ids=...` call.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SystemPlaylist {
+    pub id: String,
+    pub title: Option<String>,
+    pub artwork_url: Option<String>,
+    pub calculated_artwork_url: Option<String>,
+    pub permalink_url: Option<String>,
+    #[serde(default)]
+    pub tracks: Vec<TrackStub>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TrackStub {
+    pub id: i64,
+}
+
+/// An item inside a mixed-selections module: either a real playlist or a
+/// SoundCloud-generated system playlist. Modules like "Recently Played" mix
+/// in bare `"kind":"user"` entries too (confirmed live) -- those, and any
+/// other kind we don't render, are dropped during parsing rather than
+/// misrouted, since a bare user object structurally happens to satisfy
+/// `Playlist`'s all-optional-except-id shape (its numeric `id` parses fine,
+/// yielding a title-less, artwork-less "ghost" card) if matched blindly.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub enum SelectionEntry {
+    Playlist(Playlist),
+    SystemPlaylist(SystemPlaylist),
+}
+
+impl SelectionEntry {
+    fn from_value(v: serde_json::Value) -> Option<Self> {
+        match v.get("kind").and_then(|k| k.as_str())? {
+            "playlist" => serde_json::from_value::<Playlist>(v).ok().map(SelectionEntry::Playlist),
+            "system-playlist" => serde_json::from_value::<SystemPlaylist>(v).ok().map(SelectionEntry::SystemPlaylist),
+            _ => None,
+        }
+    }
+
+    fn id_key(&self) -> String {
+        match self {
+            SelectionEntry::Playlist(p) => p.id.to_string(),
+            SelectionEntry::SystemPlaylist(sp) => sp.id.clone(),
+        }
+    }
+
+    fn has_title(&self) -> bool {
+        let title = match self {
+            SelectionEntry::Playlist(p) => &p.title,
+            SelectionEntry::SystemPlaylist(sp) => &sp.title,
+        };
+        title.as_deref().is_some_and(|t| !t.trim().is_empty())
+    }
+}
+
+/// SoundCloud's homepage curation feed -- "Trending by genre", "Artists to
+/// watch out for", "Curated by SoundCloud", etc. Confirmed live via
+/// GET /mixed-selections (note: hyphen, not underscore -- the underscore
+/// spelling used by older third-party write-ups 404s).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct MixedSelectionsResponse {
+    #[serde(default, deserialize_with = "deserialize_selections_lenient")]
+    pub collection: Vec<Selection>,
+}
+
+fn deserialize_selections_lenient<'de, D>(deserializer: D) -> Result<Vec<Selection>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    Ok(raw
+        .into_iter()
+        .filter_map(|v| serde_json::from_value::<Selection>(v).ok())
+        .collect())
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Selection {
+    pub urn: Option<String>,
+    pub title: Option<String>,
+    #[serde(default)]
+    pub items: SelectionItems,
+}
+
+impl Selection {
+    /// Drops title-less entries (e.g. the bare "kind":"user" objects
+    /// SoundCloud mixes into modules like "Recently Played" -- confirmed
+    /// live) and de-duplicates by id, since the API itself repeats the same
+    /// system playlist multiple times in that module (once per play event,
+    /// it seems) rather than us double-parsing anything.
+    pub fn cleaned(mut self) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        self.items.collection.retain(|entry| entry.has_title() && seen.insert(entry.id_key()));
+        self
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct SelectionItems {
+    /// Deserialized permissively: some selection modules mix in items that
+    /// aren't playlist- or system-playlist-shaped (bare user/artist entries,
+    /// etc). Parsing the whole array strictly would fail the entire response
+    /// over one odd item, so parse each item on its own and drop the ones
+    /// that don't fit either shape.
+    #[serde(default, deserialize_with = "deserialize_selection_entries_lenient")]
+    pub collection: Vec<SelectionEntry>,
+}
+
+fn deserialize_selection_entries_lenient<'de, D>(deserializer: D) -> Result<Vec<SelectionEntry>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    Ok(raw.into_iter().filter_map(SelectionEntry::from_value).collect())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

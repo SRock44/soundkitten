@@ -6,6 +6,7 @@ pub mod soundcloud;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .register_asynchronous_uri_scheme_protocol("sc-stream", playback::handler)
         .invoke_handler(tauri::generate_handler![
             auth::is_logged_in,
@@ -33,8 +34,11 @@ pub fn run() {
             soundcloud::commands::sc_user_playlists,
             soundcloud::commands::sc_user_followers,
             soundcloud::commands::sc_user_followings,
+            soundcloud::commands::sc_my_followings_ids,
             soundcloud::commands::sc_user_comments,
             soundcloud::commands::sc_playlist,
+            soundcloud::commands::sc_mixed_selections,
+            soundcloud::commands::sc_system_playlist_tracks,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

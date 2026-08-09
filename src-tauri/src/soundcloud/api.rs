@@ -1,9 +1,9 @@
 //! Typed API operations built on top of soundcloud::authed_get.
 
 use super::models::{
-    Comment, CommentsResponse, FeedItem, FeedResponse, FollowersResponse, LikesResponse, Playlist,
-    PlaylistsResponse, Profile, RepostsResponse, SearchTracksResponse, SearchUsersResponse, StreamResolution,
-    Track, UserComment, UserCommentsResponse, UserTracksResponse,
+    Comment, CommentsResponse, FeedItem, FeedResponse, FollowersResponse, FollowingIdsResponse, LikesResponse,
+    MixedSelectionsResponse, Playlist, PlaylistsResponse, Profile, RepostsResponse, SearchTracksResponse,
+    SearchUsersResponse, StreamResolution, Track, UserComment, UserCommentsResponse, UserTracksResponse,
 };
 use super::{authed_delete, authed_get, authed_post, authed_put, get_full_url, resolve_raw};
 
@@ -73,15 +73,61 @@ pub async fn get_user_playlists(client: &reqwest::Client, user_id: i64, oauth_to
 /// track_count, NOT the actual tracks (confirmed live: tracks.len() == 0
 /// despite a nonzero track_count) -- this fetches the full, hydrated
 /// playlist with its track list when the user actually opens one.
+/// SoundCloud's homepage curation modules ("Trending by genre", "Artists to
+/// watch out for", "Curated by SoundCloud"). Works without auth, but pass
+/// the token when available since results may be personalized by account.
+pub async fn get_mixed_selections(client: &reqwest::Client, oauth_token: Option<&str>) -> anyhow::Result<Vec<super::models::Selection>> {
+    let resp: MixedSelectionsResponse = authed_get(client, "/mixed-selections", &[], oauth_token).await?;
+    Ok(resp.collection.into_iter().map(|s| s.cleaned()).collect())
+}
+
 pub async fn get_playlist(client: &reqwest::Client, playlist_id: i64, oauth_token: Option<&str>) -> anyhow::Result<Playlist> {
     let path = format!("/playlists/{playlist_id}");
     authed_get(client, &path, &[], oauth_token).await
+}
+
+/// Batch-hydrates full track objects for a set of ids. Used for system
+/// playlists (see [`super::models::SystemPlaylist`]) whose embedded `tracks`
+/// array only contains id stubs, not full track data.
+pub async fn get_tracks_by_ids(client: &reqwest::Client, ids: &[i64], oauth_token: Option<&str>) -> anyhow::Result<Vec<Track>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids_str = ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+    authed_get(client, "/tracks", &[("ids", ids_str.as_str())], oauth_token).await
 }
 
 pub async fn get_user_followers(client: &reqwest::Client, user_id: i64, oauth_token: Option<&str>) -> anyhow::Result<Vec<Profile>> {
     let path = format!("/users/{user_id}/followers");
     let resp: FollowersResponse = authed_get(client, &path, &[("limit", "50")], oauth_token).await?;
     Ok(resp.collection)
+}
+
+/// All ids the current user follows, used to compute follow-state per
+/// profile client-side. Follow/unfollow *writes* are blocked behind
+/// SoundCloud's DataDome bot-protection (confirmed live: `POST
+/// /me/followings/:id` -- the correct route, per the web bundle --
+/// consistently 403s with a CAPTCHA challenge even with a valid oauth
+/// token), so this app can only reflect real follow state, not change it;
+/// the UI sends users to soundcloud.com to actually follow someone.
+pub async fn get_my_followings_ids(client: &reqwest::Client, oauth_token: &str) -> anyhow::Result<Vec<i64>> {
+    let user_id = current_user_id(client, oauth_token).await?;
+    let path = format!("/users/{user_id}/followings/ids");
+
+    let mut all_ids = Vec::new();
+    let mut next_url: Option<String> = None;
+    for _page in 0..50 {
+        let resp: FollowingIdsResponse = match &next_url {
+            Some(url) => get_full_url(client, url, Some(oauth_token)).await?,
+            None => authed_get(client, &path, &[("limit", "5000")], Some(oauth_token)).await?,
+        };
+        all_ids.extend(resp.collection);
+        match resp.next_href {
+            Some(href) => next_url = Some(href),
+            None => break,
+        }
+    }
+    Ok(all_ids)
 }
 
 pub async fn get_user_followings(client: &reqwest::Client, user_id: i64, oauth_token: Option<&str>) -> anyhow::Result<Vec<Profile>> {
