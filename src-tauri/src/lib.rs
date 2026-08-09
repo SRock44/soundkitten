@@ -3,6 +3,19 @@ pub mod official_oauth;
 pub mod playback;
 pub mod soundcloud;
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{Manager, WindowEvent};
+
+const MAIN_WINDOW_LABEL: &str = "main";
+
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -12,6 +25,46 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("sc-stream", playback::handler)
+        .setup(|app| {
+            // Tray icon so closing the window (see the CloseRequested
+            // handler below) can hide it instead of quitting -- playback
+            // keeps running in the hidden window, and this is how the user
+            // gets back to it or actually exits.
+            let show_item = MenuItem::with_id(app, "show", "Show SoundKitten", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().cloned().expect("app has a default window icon"))
+                .tooltip("SoundKitten")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == MAIN_WINDOW_LABEL {
+                    // Hide instead of quitting -- playback continues in the
+                    // background, reachable again from the tray icon. The
+                    // tray menu's "Quit" is the only thing that actually
+                    // exits.
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             auth::is_logged_in,
             auth::logout,
