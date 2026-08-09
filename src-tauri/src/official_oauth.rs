@@ -23,8 +23,9 @@ const CLIENT_ID: &str = "MlbYb5ThUhbWHcXlZZ7fgMDcoGKOgyIs";
 const AUTHORIZE_URL: &str = "https://secure.soundcloud.com/authorize";
 const OFFICIAL_API: &str = "https://api.soundcloud.com";
 const PROXY_BASE: &str = "https://auth.soundkitten.org";
-// Must match the redirect_uri registered with the SoundCloud app.
-const REDIRECT_PORT: u16 = 8765;
+// Must match the redirect_uri registered with the SoundCloud app. Also used
+// by auth.rs's combined login flow, see build_authorize_url/redirect_uri.
+pub(crate) const REDIRECT_PORT: u16 = 8765;
 
 const KEYRING_SERVICE: &str = "com.soundkitten.app.official";
 const KEYRING_USER: &str = "official_oauth_tokens";
@@ -85,22 +86,45 @@ pub fn disconnect_official_login() {
 }
 
 // --- PKCE + loopback redirect ---
+// pub(crate) because auth.rs's combined login flow (see start_login there)
+// drives this same /authorize + loopback dance itself, from inside the
+// primary login webview instead of the system browser, so it can pick up
+// both the unofficial oauth_token cookie and the official authorization
+// code from one login screen.
 
-fn random_url_safe(len: usize) -> String {
+pub(crate) fn random_url_safe(len: usize) -> String {
     let bytes: Vec<u8> = (0..len).map(|_| rand::thread_rng().gen()).collect();
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn pkce_challenge(verifier: &str) -> String {
+pub(crate) fn pkce_challenge(verifier: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(verifier.as_bytes());
     URL_SAFE_NO_PAD.encode(hasher.finalize())
 }
 
+pub(crate) fn redirect_uri() -> String {
+    format!("http://127.0.0.1:{REDIRECT_PORT}/callback")
+}
+
+pub(crate) fn build_authorize_url(challenge: &str, state: &str, redirect_uri: &str) -> anyhow::Result<url::Url> {
+    Ok(url::Url::parse_with_params(
+        AUTHORIZE_URL,
+        &[
+            ("client_id", CLIENT_ID),
+            ("redirect_uri", redirect_uri),
+            ("response_type", "code"),
+            ("code_challenge", challenge),
+            ("code_challenge_method", "S256"),
+            ("state", state),
+        ],
+    )?)
+}
+
 /// Blocks the current (spawned) thread waiting for the one OAuth redirect.
 /// Runs off the async runtime via spawn_blocking, mirroring the pattern
 /// tools/sc-probe/src/oauth.rs already proved works for this exact flow.
-fn wait_for_redirect(port: u16, expected_state: &str) -> anyhow::Result<String> {
+pub(crate) fn wait_for_redirect(port: u16, expected_state: &str) -> anyhow::Result<String> {
     let server = tiny_http::Server::http(format!("127.0.0.1:{port}"))
         .map_err(|e| anyhow::anyhow!("failed to bind loopback listener on {port}: {e}"))?;
 
@@ -157,6 +181,15 @@ async fn refresh_via_proxy(refresh_token: &str) -> anyhow::Result<StoredTokens> 
     parse_token_response(resp).await
 }
 
+/// Exchanges a freshly-obtained authorization code and stores the result.
+/// Used both by start_official_login (lazy connect, own login screen) and
+/// by auth.rs's combined primary-login flow.
+pub(crate) async fn complete_login(code: &str, verifier: &str, redirect_uri: &str) -> anyhow::Result<()> {
+    let tokens = exchange_code_via_proxy(code, verifier, redirect_uri).await?;
+    store_tokens(&tokens)?;
+    Ok(())
+}
+
 async fn parse_token_response(resp: reqwest::Response) -> anyhow::Result<StoredTokens> {
     let status = resp.status();
     let body: serde_json::Value = resp.json().await?;
@@ -190,25 +223,18 @@ async fn get_valid_access_token() -> Result<String, String> {
     Ok(refreshed.access_token)
 }
 
+/// Lazy-connect path: used when the user didn't grant the official OAuth
+/// consent during the combined primary login (see auth.rs's start_login),
+/// or was already logged in from before this existed, and now wants to
+/// like or follow something for the first time. Uses the system browser,
+/// per RFC 8252's recommendation for native-app OAuth.
 #[tauri::command]
 pub async fn start_official_login(app: AppHandle) -> Result<(), String> {
     let verifier = random_url_safe(64);
     let challenge = pkce_challenge(&verifier);
     let state = random_url_safe(16);
-    let redirect_uri = format!("http://127.0.0.1:{REDIRECT_PORT}/callback");
-
-    let auth_url = url::Url::parse_with_params(
-        AUTHORIZE_URL,
-        &[
-            ("client_id", CLIENT_ID),
-            ("redirect_uri", &redirect_uri),
-            ("response_type", "code"),
-            ("code_challenge", &challenge),
-            ("code_challenge_method", "S256"),
-            ("state", &state),
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+    let redirect_uri = redirect_uri();
+    let auth_url = build_authorize_url(&challenge, &state, &redirect_uri).map_err(|e| e.to_string())?;
 
     // Bind the listener BEFORE opening the browser so the redirect always
     // has somewhere to land.
@@ -223,9 +249,7 @@ pub async fn start_official_login(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("login task panicked: {e}"))?
         .map_err(|e| e.to_string())?;
 
-    let tokens = exchange_code_via_proxy(&code, &verifier, &redirect_uri).await.map_err(|e| e.to_string())?;
-    store_tokens(&tokens).map_err(|e| e.to_string())?;
-    Ok(())
+    complete_login(&code, &verifier, &redirect_uri).await.map_err(|e| e.to_string())
 }
 
 // --- Writes that only work via official OAuth (DataDome-blocked otherwise) ---

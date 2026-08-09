@@ -1,9 +1,21 @@
-//! Login flow: embedded webview -> extract oauth_token cookie -> OS keychain.
-//! Falls back to a manual-token-paste command when cookie extraction fails.
+//! Primary login: one embedded-webview screen, pointed at SoundCloud's
+//! official /authorize page rather than the plain login page. You can't
+//! authorize a third-party app without a SoundCloud session, so this still
+//! shows the normal login form first if the user isn't already signed in,
+//! sets the same oauth_token cookie the unofficial API needs (extracted the
+//! same way it always was), and then -- if the user also hits Allow on the
+//! consent screen -- redirects with an authorization code, which we
+//! exchange for official OAuth tokens too (see official_oauth.rs). One
+//! login screen, both credential sets. If the user closes the window or
+//! declines consent, primary login still succeeds on the cookie alone;
+//! they just get official_oauth's lazy connect prompt later on first like
+//! or follow, same as if they'd never seen this screen.
 
 use serde::Serialize;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+use crate::official_oauth;
 
 const KEYRING_SERVICE: &str = "com.soundkitten.app";
 const KEYRING_USER: &str = "oauth_token";
@@ -42,30 +54,36 @@ pub fn logout() -> Result<(), String> {
     Ok(())
 }
 
-/// Opens a login window pointed at soundcloud.com, polls the webview's cookie
-/// jar until an oauth_token cookie appears (i.e. the user finished logging in),
-/// stores it, closes the window, and emits `auth:result` to the frontend.
 #[tauri::command]
 pub async fn start_login(app: AppHandle) -> Result<(), String> {
     if app.get_webview_window(LOGIN_WINDOW_LABEL).is_some() {
         return Ok(()); // login already in progress
     }
 
-    let _window = WebviewWindowBuilder::new(
-        &app,
-        LOGIN_WINDOW_LABEL,
-        WebviewUrl::External("https://soundcloud.com/login".parse().map_err(|e| format!("{e}"))?),
-    )
-    .title("Log in to SoundCloud")
-    .inner_size(480.0, 720.0)
-    .build()
-    .map_err(|e| e.to_string())?;
+    let verifier = official_oauth::random_url_safe(64);
+    let challenge = official_oauth::pkce_challenge(&verifier);
+    let state = official_oauth::random_url_safe(16);
+    let redirect_uri = official_oauth::redirect_uri();
+    let auth_url = official_oauth::build_authorize_url(&challenge, &state, &redirect_uri).map_err(|e| e.to_string())?;
+
+    // Bind the loopback listener before the window can possibly navigate
+    // there, same reasoning as official_oauth::start_official_login.
+    let state_for_wait = state.clone();
+    let wait_handle = tauri::async_runtime::spawn_blocking(move || official_oauth::wait_for_redirect(official_oauth::REDIRECT_PORT, &state_for_wait));
+
+    let _window = WebviewWindowBuilder::new(&app, LOGIN_WINDOW_LABEL, WebviewUrl::External(auth_url.as_str().parse().map_err(|e| format!("{e}"))?))
+        .title("Log in to SoundCloud")
+        .inner_size(480.0, 760.0)
+        .build()
+        .map_err(|e| e.to_string())?;
 
     let app_for_poll = app.clone();
     tauri::async_runtime::spawn(async move {
         let deadline = Instant::now() + Duration::from_secs(300);
         let sc_url: url::Url = "https://soundcloud.com".parse().unwrap();
 
+        // Phase 1, required: wait for the oauth_token cookie. Playback and
+        // browsing depend on this; the official side (phase 2) is a bonus.
         loop {
             if Instant::now() >= deadline {
                 emit_result(&app_for_poll, false, Some("login timed out after 5 minutes".into()));
@@ -85,17 +103,42 @@ pub async fn start_login(app: AppHandle) -> Result<(), String> {
             if let Ok(cookies) = cookies_result {
                 if let Some(token_cookie) = cookies.iter().find(|c| c.name() == "oauth_token") {
                     let token = token_cookie.value().to_string();
-                    match store_token(&token) {
-                        Ok(()) => emit_result(&app_for_poll, true, None),
-                        Err(e) => emit_result(&app_for_poll, false, Some(format!("failed to store token: {e}"))),
+                    if let Err(e) = store_token(&token) {
+                        emit_result(&app_for_poll, false, Some(format!("failed to store token: {e}")));
+                        close_login_window(&app_for_poll);
+                        return;
                     }
-                    close_login_window(&app_for_poll);
-                    return;
+                    break;
                 }
             }
 
             tokio::time::sleep(Duration::from_millis(750)).await;
         }
+
+        // Phase 2, best-effort: the window is still open, likely on the
+        // consent screen now. Give the user a chance to hit Allow so we can
+        // pick up the official credentials too, without holding primary
+        // login's success hostage to it -- if they close the window or
+        // deny, that's fine, they'll see the lazy connect prompt later.
+        let window_closed = async {
+            loop {
+                if app_for_poll.get_webview_window(LOGIN_WINDOW_LABEL).is_none() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        };
+        tokio::select! {
+            result = wait_handle => {
+                if let Ok(Ok(code)) = result {
+                    let _ = official_oauth::complete_login(&code, &verifier, &redirect_uri).await;
+                }
+            }
+            _ = window_closed => {}
+        }
+
+        close_login_window(&app_for_poll);
+        emit_result(&app_for_poll, true, None);
     });
 
     Ok(())
