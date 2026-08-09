@@ -8,15 +8,35 @@ pub mod models;
 use regex::Regex;
 use serde::de::DeserializeOwned;
 use std::sync::OnceLock;
-use std::sync::RwLock;
+use tokio::sync::Mutex;
 
 const API_V2: &str = "https://api-v2.soundcloud.com";
 const WEB_APP: &str = "https://soundcloud.com";
+const CLIENT_ID_KEYRING_SERVICE: &str = "com.soundkitten.app";
+const CLIENT_ID_KEYRING_USER: &str = "client_id_override";
 
-static CACHED_CLIENT_ID: OnceLock<RwLock<Option<String>>> = OnceLock::new();
+static CACHED_CLIENT_ID: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
-fn cache() -> &'static RwLock<Option<String>> {
-    CACHED_CLIENT_ID.get_or_init(|| RwLock::new(None))
+fn cache() -> &'static Mutex<Option<String>> {
+    CACHED_CLIENT_ID.get_or_init(|| Mutex::new(None))
+}
+
+fn client_id_keyring_entry() -> anyhow::Result<keyring::Entry> {
+    Ok(keyring::Entry::new(CLIENT_ID_KEYRING_SERVICE, CLIENT_ID_KEYRING_USER)?)
+}
+
+/// A manually-set client_id, persisted across restarts -- used when
+/// soundcloud.com itself is unreachable (e.g. an IP-level CloudFront block,
+/// confirmed live: soundcloud.com 403s with "Request blocked" while
+/// api-v2.soundcloud.com keeps responding normally, meaning a still-valid
+/// client_id is all that's actually needed) so scraping isn't the only path.
+fn get_persisted_client_id_override() -> Option<String> {
+    client_id_keyring_entry().ok()?.get_password().ok()
+}
+
+fn persist_client_id_override(id: &str) -> anyhow::Result<()> {
+    client_id_keyring_entry()?.set_password(id)?;
+    Ok(())
 }
 
 /// Scrapes a working client_id from soundcloud.com's public JS bundles.
@@ -27,7 +47,7 @@ pub async fn fetch_client_id(client: &reqwest::Client) -> anyhow::Result<String>
     let script_re = Regex::new(r#"src="(https://a-v2\.sndcdn\.com/assets/[^"]+\.js)""#)?;
     let script_urls: Vec<String> = script_re.captures_iter(&html).map(|c| c[1].to_string()).collect();
     if script_urls.is_empty() {
-        anyhow::bail!("no sndcdn asset script tags found — SoundCloud's bundle layout may have changed");
+        anyhow::bail!("no sndcdn asset script tags found -- either SoundCloud's bundle layout changed, or soundcloud.com is unreachable right now (e.g. blocked/rate-limited); try setting a manual client_id override in Settings");
     }
 
     let id_re = Regex::new(r#"client_id["']?\s*[:=]\s*["']([a-zA-Z0-9]{32})["']"#)?;
@@ -43,13 +63,31 @@ pub async fn fetch_client_id(client: &reqwest::Client) -> anyhow::Result<String>
     anyhow::bail!("scanned {} bundle(s) but found no client_id pattern", script_urls.len())
 }
 
-/// Returns a cached client_id, fetching (and caching) a fresh one if needed.
+/// Returns a cached client_id, checking (in order) the in-memory cache, a
+/// persisted manual override, then falling back to scraping soundcloud.com.
+///
+/// The lock is held across the whole check-then-fetch sequence (not just the
+/// individual reads/writes) specifically so this is a singleflight: on a
+/// cold start, half a dozen-plus commands (likes, playlists, me, followings,
+/// mixed-selections, feed, a restored track...) all call this within
+/// milliseconds of each other. Releasing the lock before the fetch (the
+/// previous version) let every single one of them see an empty cache and
+/// launch its own independent scrape of soundcloud.com at once -- a burst of
+/// simultaneous requests on literally every app launch, which is exactly the
+/// kind of bot-like traffic pattern that gets an IP blocked. Holding the
+/// lock across the await means only the first caller actually fetches;
+/// everyone else queues behind the lock and then just reads the result.
 pub async fn get_client_id(client: &reqwest::Client) -> anyhow::Result<String> {
-    if let Some(id) = cache().read().unwrap().clone() {
+    let mut guard = cache().lock().await;
+    if let Some(id) = guard.clone() {
+        return Ok(id);
+    }
+    if let Some(id) = get_persisted_client_id_override() {
+        *guard = Some(id.clone());
         return Ok(id);
     }
     let id = fetch_client_id(client).await?;
-    *cache().write().unwrap() = Some(id.clone());
+    *guard = Some(id.clone());
     Ok(id)
 }
 
@@ -140,9 +178,31 @@ pub async fn authed_post<T: DeserializeOwned>(
 }
 
 /// Manual override, e.g. from a Settings screen, used when scraping breaks.
+/// Persisted to the OS keychain so it survives app restarts -- without this,
+/// a fresh launch would immediately re-attempt (and re-fail) the scrape.
 #[tauri::command]
-pub fn set_client_id_override(id: String) {
-    *cache().write().unwrap() = Some(id);
+pub async fn set_client_id_override(id: String) -> Result<(), String> {
+    persist_client_id_override(&id).map_err(|e| e.to_string())?;
+    *cache().lock().await = Some(id);
+    Ok(())
+}
+
+/// Clears a manual override and drops the in-memory cache, so the next
+/// request goes back to scraping soundcloud.com fresh.
+#[tauri::command]
+pub async fn clear_client_id_override() -> Result<(), String> {
+    if let Ok(entry) = client_id_keyring_entry() {
+        let _ = entry.delete_credential();
+    }
+    *cache().lock().await = None;
+    Ok(())
+}
+
+/// Whether a manual override is currently active, so the Settings UI can
+/// show real state instead of a write-only input.
+#[tauri::command]
+pub fn get_client_id_override() -> Option<String> {
+    get_persisted_client_id_override()
 }
 
 /// GET an api-v2 path with client_id (+ optional OAuth cookie auth), refreshing
@@ -170,8 +230,12 @@ pub async fn authed_get<T: DeserializeOwned>(
 
         if status == reqwest::StatusCode::UNAUTHORIZED && attempt == 0 {
             // client_id may be stale; force a fresh scrape and retry once.
+            // Locked across the fetch itself (same reasoning as get_client_id)
+            // so several requests going stale around the same moment don't
+            // each independently re-scrape soundcloud.com in parallel.
+            let mut guard = cache().lock().await;
             client_id = fetch_client_id(client).await?;
-            *cache().write().unwrap() = Some(client_id.clone());
+            *guard = Some(client_id.clone());
             continue;
         }
         if !status.is_success() {
