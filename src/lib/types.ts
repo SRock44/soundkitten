@@ -91,6 +91,16 @@ export type UserComment = {
   track_title: string | null;
 };
 
+/** One Home-feed row -- a track plus enough activity context to show
+ * "Reposted by X" vs. a plain upload (see FeedEntry in
+ * src-tauri/src/soundcloud/models.rs). */
+export type FeedEntry = {
+  track: Track;
+  is_repost: boolean;
+  reposted_by: User | null;
+  activity_at: string | null;
+};
+
 export function timeAgo(iso: string | null): string {
   if (!iso) return "";
   const diffMs = Date.now() - new Date(iso).getTime();

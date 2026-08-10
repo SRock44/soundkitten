@@ -3,7 +3,7 @@
 //! so a raw, time-limited CDN URL never has to round-trip through the frontend.
 
 use super::api;
-use super::models::{Comment, Playlist, Profile, Selection, SearchResultItem, Track, UserComment};
+use super::models::{Comment, FeedEntry, Playlist, Profile, Selection, SearchResultItem, Track, UserComment};
 use crate::auth::get_stored_token;
 
 fn require_token() -> Result<String, String> {
@@ -93,7 +93,7 @@ pub async fn sc_search_all(query: String) -> Result<Vec<SearchResultItem>, Strin
 }
 
 #[tauri::command]
-pub async fn sc_feed() -> Result<Vec<Track>, String> {
+pub async fn sc_feed() -> Result<Vec<FeedEntry>, String> {
     let Some(token) = get_stored_token() else {
         return Err("not logged in".into());
     };

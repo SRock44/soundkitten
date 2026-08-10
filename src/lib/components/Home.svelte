@@ -2,7 +2,7 @@
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
   import { viewMode } from "../stores/viewMode.svelte";
-  import { isSystemPlaylist, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
+  import { isSystemPlaylist, timeAgo, type FeedEntry, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
   import PlaylistShelf from "./PlaylistShelf.svelte";
   import Icon from "./Icon.svelte";
@@ -13,6 +13,9 @@
     me,
     likes,
     playlists,
+    feed,
+    feedLoading,
+    feedError,
     onNavigate,
     onOpenProfile,
     onOpenTrack,
@@ -22,6 +25,10 @@
     me: Profile | null;
     likes: Track[];
     playlists: Playlist[];
+    /** Lifted up to +page.svelte (mirrors likes/playlists) so the global refresh button can force-refetch it too -- see ensureFeedLoaded there. */
+    feed: FeedEntry[];
+    feedLoading: boolean;
+    feedError: string;
     onNavigate: (v: "likes" | "playlists") => void;
     onOpenProfile: (id: number) => void;
     onOpenTrack: (t: Track) => void;
@@ -42,6 +49,10 @@
     if (!isSystemPlaylist(p)) onOpenPlaylist(p);
   }
 
+  function openReposter(entry: FeedEntry) {
+    if (entry.reposted_by) onOpenProfile(entry.reposted_by.id);
+  }
+
   function greeting(): string {
     const hour = new Date().getHours();
     if (hour < 5) return "Good night";
@@ -50,29 +61,17 @@
     return "Good evening";
   }
 
-  let feed = $state<Track[]>([]);
-  let feedLoading = $state(true);
-  let feedError = $state("");
   let feedExpanded = $state(false);
   const FEED_PREVIEW_COUNT = 5;
+  let feedTracks = $derived(feed.map((e) => e.track));
 
   let selections = $state<Selection[]>([]);
   let selectionsLoading = $state(true);
 
-  // Cache-first, and staggered relative to each other -- these used to both
-  // fire immediately on every mount (i.e. every login and every "Home" nav),
-  // on top of the app-level likes/playlists/me/followings burst, which is
-  // exactly the kind of concurrent request pile-up that got the account
-  // rate-limited. A warm cache means most of the time neither of these
-  // touches the network at all.
-  (async () => {
-    await syncWithCache("feed", () => api.feed(), (v) => (feed = v), {
-      onRateLimited: () => syncStatus.rateLimited(),
-      onError: (e) => (feedError = `Failed to load feed: ${e}`),
-    });
-    feedLoading = false;
-  })();
-
+  // Staggered relative to the app-level likes/playlists/me/followings/feed
+  // burst on login/Home-nav, which is exactly the kind of concurrent
+  // request pile-up that got the account rate-limited previously. A warm
+  // cache means most of the time this doesn't touch the network at all.
   (async () => {
     await delay(500);
     await syncWithCache(
@@ -111,7 +110,18 @@
       <p class="muted">No recent activity from people you follow.</p>
     {:else}
       <div class="list" class:scrollable={feedExpanded}>
-        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as t, i}<TrackRow track={t} queue={feed} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
+        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as entry, i (entry.track.id)}
+          <div class="feed-item">
+            {#if entry.is_repost && entry.reposted_by}
+              <button class="origin" onclick={() => openReposter(entry)}>
+                <Icon name="repost" size={11} />
+                <span>Reposted by {entry.reposted_by.username ?? "someone"}</span>
+                {#if entry.activity_at}<span class="origin-time">· {timeAgo(entry.activity_at)}</span>{/if}
+              </button>
+            {/if}
+            <TrackRow track={entry.track} queue={feedTracks} index={i} {onOpenProfile} {onOpenTrack} {me} />
+          </div>
+        {/each}
       </div>
       {#if feed.length > FEED_PREVIEW_COUNT}
         <button class="see-all" onclick={() => (feedExpanded = !feedExpanded)}>
@@ -281,6 +291,34 @@ h2 {
 .list.scrollable {
   max-height: 22rem;
   overflow-y: auto;
+}
+
+.feed-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.origin {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  padding: 0.15rem 0.6rem 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: fit-content;
+}
+
+.origin:hover {
+  color: var(--fg);
+}
+
+.origin-time {
+  font-weight: 400;
 }
 
 .muted {

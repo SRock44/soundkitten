@@ -1,10 +1,10 @@
 //! Typed API operations built on top of soundcloud::authed_get.
 
 use super::models::{
-    Comment, CommentsResponse, FeedItem, FeedResponse, FollowersResponse, FollowingIdsResponse, LikesResponse,
-    MixedSelectionsResponse, Playlist, PlaylistsResponse, Profile, RepostsResponse, SearchAllResponse,
-    SearchResultItem, SearchTracksResponse, SearchUsersResponse, StreamResolution, Track, UserComment,
-    UserCommentsResponse, UserTracksResponse,
+    Comment, CommentsResponse, FeedEntry, FeedItem, FeedResponse, FollowersResponse, FollowingIdsResponse,
+    LikesResponse, MixedSelectionsResponse, Playlist, PlaylistsResponse, Profile, RepostsResponse,
+    SearchAllResponse, SearchResultItem, SearchTracksResponse, SearchUsersResponse, StreamResolution, Track,
+    UserComment, UserCommentsResponse, UserTracksResponse,
 };
 use super::{authed_delete, authed_get, authed_post, authed_put, get_full_url, resolve_raw};
 
@@ -175,9 +175,22 @@ pub async fn search_users(client: &reqwest::Client, query: &str, oauth_token: Op
 /// Personalized activity stream (new uploads/reposts from people you follow) --
 /// this is what backs SoundCloud's own "Feed"/Home. Only the first page is
 /// fetched since it's a preview list, not a fully paginated view.
-pub async fn get_feed(client: &reqwest::Client, oauth_token: &str) -> anyhow::Result<Vec<Track>> {
+pub async fn get_feed(client: &reqwest::Client, oauth_token: &str) -> anyhow::Result<Vec<FeedEntry>> {
     let resp: FeedResponse = authed_get(client, "/stream", &[("limit", "30")], Some(oauth_token)).await?;
-    Ok(resp.collection.iter().filter_map(FeedItem::extract_track).collect())
+    Ok(resp
+        .collection
+        .iter()
+        .filter_map(|item| {
+            let track = item.extract_track()?;
+            let is_repost = item.is_repost();
+            Some(FeedEntry {
+                reposted_by: if is_repost { item.user.clone() } else { None },
+                activity_at: item.created_at.clone(),
+                is_repost,
+                track,
+            })
+        })
+        .collect())
 }
 
 pub async fn search_tracks(client: &reqwest::Client, query: &str, oauth_token: Option<&str>) -> anyhow::Result<Vec<Track>> {

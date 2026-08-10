@@ -21,7 +21,7 @@
   import { syncStatus } from "$lib/stores/syncStatus.svelte";
   import { checkForUpdates } from "$lib/updater";
   import { clearCached, delay, loadCached, saveCached, syncWithCache } from "$lib/localCache";
-  import type { Playlist, Profile, SearchResultItem, SystemPlaylist, Track } from "$lib/types";
+  import type { FeedEntry, Playlist, Profile, SearchResultItem, SystemPlaylist, Track } from "$lib/types";
   import PersonCard from "$lib/components/PersonCard.svelte";
   import PersonListRow from "$lib/components/PersonListRow.svelte";
   import PlaylistListRow from "$lib/components/PlaylistListRow.svelte";
@@ -58,6 +58,9 @@
   }
   let allSearchTracks = $derived(searchAllResults.filter(isTrackResult));
   let likes = $state<Track[]>([]);
+  let feed = $state<FeedEntry[]>([]);
+  let feedLoading = $state(true);
+  let feedError = $state("");
   // Canonical source is playlistsStore (shared with the context menu's
   // "Add to playlist" picker and PlaylistDetail's rename/delete, several
   // component layers away) -- this is a read view onto it, not a second
@@ -190,6 +193,15 @@
     });
   }
 
+  async function ensureFeedLoaded(force = false) {
+    await syncWithCache("feed", () => api.feed(), (v) => (feed = v), {
+      maxAgeMs: force ? 0 : 5 * 60 * 1000,
+      onRateLimited: () => syncStatus.rateLimited(),
+      onError: (e) => (feedError = `Failed to load feed: ${e}`),
+    });
+    feedLoading = false;
+  }
+
   let lastLikesSyncAt = 0;
 
   /**
@@ -244,7 +256,7 @@
       } else if (view === "profile" && profileUserId !== null) {
         profileRefreshKey += 1;
       } else if (view === "home") {
-        await Promise.all([ensureLikesLoaded(true), ensurePlaylistsLoaded(true)]);
+        await Promise.all([ensureLikesLoaded(true), ensurePlaylistsLoaded(true), ensureFeedLoaded(true)]);
       } else if (view === "likes") {
         await ensureLikesLoaded(true);
       } else if (view === "playlists") {
@@ -285,6 +297,9 @@
     await api.logout();
     loggedIn = false;
     likes = [];
+    feed = [];
+    feedLoading = true;
+    feedError = "";
     playlistsStore.seed([]);
     searchAllResults = [];
     searchResults = [];
@@ -319,6 +334,7 @@
       // sequential, not Promise.all -- see refreshAuth's comment on why
       await ensureLikesLoaded();
       await ensurePlaylistsLoaded();
+      await ensureFeedLoaded();
       loading = false;
     } else if (v === "likes") {
       loading = likes.length === 0;
@@ -424,7 +440,7 @@
           <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} />
         {/key}
       {:else if view === "home"}
-        <Home {me} {likes} {playlists} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
+        <Home {me} {likes} {playlists} {feed} {feedLoading} {feedError} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
       {:else if view === "search"}
         <div class="search-header">
           <h1>{searchQuery.trim() ? `Results for "${searchQuery}"` : "Search"}</h1>

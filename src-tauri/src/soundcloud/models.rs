@@ -499,11 +499,24 @@ pub struct FeedResponse {
 pub struct FeedItem {
     #[serde(rename = "type")]
     pub kind: Option<String>,
+    pub created_at: Option<String>,
+    /// The user who reposted, present only on "*-repost" items. Believed to
+    /// sit at the top level alongside `track` (SoundCloud's stream API
+    /// convention elsewhere), not yet live-verified against a real repost
+    /// item -- see `sc-probe playlist-feed-spike`, which dumps one raw for
+    /// exactly this. If this turns out wrong, `reposted_by` on `FeedEntry`
+    /// below just comes back `None` rather than failing the whole item,
+    /// since it's optional.
+    pub user: Option<User>,
     pub track: Option<Track>,
     pub origin: Option<serde_json::Value>,
 }
 
 impl FeedItem {
+    pub fn is_repost(&self) -> bool {
+        self.kind.as_deref().is_some_and(|k| k.ends_with("-repost"))
+    }
+
     /// Best-effort extraction of a playable track from whichever shape this
     /// particular feed item turned out to have.
     pub fn extract_track(&self) -> Option<Track> {
@@ -516,4 +529,14 @@ impl FeedItem {
         }
         serde_json::from_value::<Track>(origin.get("track")?.clone()).ok()
     }
+}
+
+/// What the frontend actually consumes for the Home feed -- a track plus
+/// enough activity context to show "Reposted by X" vs. a plain upload.
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedEntry {
+    pub track: Track,
+    pub is_repost: bool,
+    pub reposted_by: Option<User>,
+    pub activity_at: Option<String>,
 }
