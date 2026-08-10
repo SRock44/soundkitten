@@ -263,6 +263,17 @@
   background: var(--surface);
   border-radius: 16px;
   padding: 1.1rem;
+  /* Both needed for a grid item that's told height: 100% (+page.svelte):
+     box-sizing so the padding counts toward that 100% instead of adding
+     on top of it (which was pushing every card taller than its grid row
+     and overlapping the row below -- the "cards are connected" bug);
+     min-width so a long, unbroken title can't force this item wider than
+     its grid column and drag content past the card's right edge (the
+     share-button-overflow bug) -- grid items default to min-width: auto,
+     sized to fit their content's natural width regardless of the
+     column's own constraint, unless told otherwise. */
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .repost-tag-slot {
@@ -428,6 +439,7 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .title {
@@ -459,6 +471,7 @@
 .action-bar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.4rem;
 }
 
