@@ -6,7 +6,7 @@
   import WindowControls from "./WindowControls.svelte";
   import SettingsModal from "./SettingsModal.svelte";
 
-  type View = "home" | "search" | "likes" | "playlists";
+  type View = "home" | "search" | "likes" | "playlists" | "feed";
   let {
     active,
     onNavigate,

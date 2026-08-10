@@ -176,7 +176,15 @@ pub async fn search_users(client: &reqwest::Client, query: &str, oauth_token: Op
 /// this is what backs SoundCloud's own "Feed"/Home. Only the first page is
 /// fetched since it's a preview list, not a fully paginated view.
 pub async fn get_feed(client: &reqwest::Client, oauth_token: &str) -> anyhow::Result<Vec<FeedEntry>> {
-    let resp: FeedResponse = authed_get(client, "/stream", &[("limit", "30")], Some(oauth_token)).await?;
+    // 50, not 30 -- the focused feed view (opened via Home's "..." button)
+    // wants enough items to feel like a real feed, not just the Home
+    // preview's 5-item slice. /stream is believed to already interleave
+    // plain uploads from people you follow alongside reposts (both flow
+    // through extract_track() below regardless of `kind`), not just
+    // reposts -- if followed-artist uploads are still thin, that's more
+    // likely SoundCloud's own stream composition than a filter here; worth
+    // a live check via `sc-probe playlist-feed-spike`.
+    let resp: FeedResponse = authed_get(client, "/stream", &[("limit", "50")], Some(oauth_token)).await?;
     Ok(resp
         .collection
         .iter()

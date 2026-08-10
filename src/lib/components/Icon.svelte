@@ -40,7 +40,8 @@
     | "playlists"
     | "plus"
     | "trash"
-    | "pencil";
+    | "pencil"
+    | "more";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -190,5 +191,9 @@
     <path d="M5.5 6l.7 9.2a1 1 0 0 0 1 .93h5.6a1 1 0 0 0 1-.93L14.5 6" />
   {:else if name === "pencil"}
     <path d="M12.8 3.8a1.6 1.6 0 0 1 2.3 2.3L6.5 14.6l-3 .7.7-3Z" />
+  {:else if name === "more"}
+    <circle cx="4.5" cy="10" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="10" r="1.3" fill="currentColor" stroke="none" />
   {/if}
 </svg>

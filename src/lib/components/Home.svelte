@@ -2,8 +2,9 @@
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
   import { viewMode } from "../stores/viewMode.svelte";
-  import { isSystemPlaylist, timeAgo, type FeedEntry, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
+  import { isSystemPlaylist, type FeedEntry, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
+  import FeedRow from "./FeedRow.svelte";
   import PlaylistShelf from "./PlaylistShelf.svelte";
   import Icon from "./Icon.svelte";
   import { delay, syncWithCache } from "../localCache";
@@ -29,7 +30,7 @@
     feed: FeedEntry[];
     feedLoading: boolean;
     feedError: string;
-    onNavigate: (v: "likes" | "playlists") => void;
+    onNavigate: (v: "likes" | "playlists" | "feed") => void;
     onOpenProfile: (id: number) => void;
     onOpenTrack: (t: Track) => void;
     onOpenPlaylist: (p: Playlist) => void;
@@ -49,10 +50,6 @@
     if (!isSystemPlaylist(p)) onOpenPlaylist(p);
   }
 
-  function openReposter(entry: FeedEntry) {
-    if (entry.reposted_by) onOpenProfile(entry.reposted_by.id);
-  }
-
   function greeting(): string {
     const hour = new Date().getHours();
     if (hour < 5) return "Good night";
@@ -61,8 +58,7 @@
     return "Good evening";
   }
 
-  let feedExpanded = $state(false);
-  const FEED_PREVIEW_COUNT = 5;
+  const FEED_PREVIEW_COUNT = 15;
   let feedTracks = $derived(feed.map((e) => e.track));
 
   let selections = $state<Selection[]>([]);
@@ -101,7 +97,12 @@
   </div>
 
   <section class="module">
-    <h2>Feed</h2>
+    <div class="section-header">
+      <h2>Feed</h2>
+      <button class="more-btn" onclick={() => onNavigate("feed")} aria-label="Open full feed" title="Open full feed">
+        <Icon name="more" size={16} />
+      </button>
+    </div>
     {#if feedLoading}
       <p class="muted">Loading feed...</p>
     {:else if feedError}
@@ -109,25 +110,11 @@
     {:else if feed.length === 0}
       <p class="muted">No recent activity from people you follow.</p>
     {:else}
-      <div class="list" class:scrollable={feedExpanded}>
-        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as entry, i (entry.track.id)}
-          <div class="feed-item">
-            {#if entry.is_repost && entry.reposted_by}
-              <button class="origin" onclick={() => openReposter(entry)}>
-                <Icon name="repost" size={11} />
-                <span>Reposted by {entry.reposted_by.username ?? "someone"}</span>
-                {#if entry.activity_at}<span class="origin-time">· {timeAgo(entry.activity_at)}</span>{/if}
-              </button>
-            {/if}
-            <TrackRow track={entry.track} queue={feedTracks} index={i} {onOpenProfile} {onOpenTrack} {me} />
-          </div>
+      <div class="list feed-list">
+        {#each feed.slice(0, FEED_PREVIEW_COUNT) as entry, i (entry.track.id)}
+          <FeedRow {entry} index={i} queue={feedTracks} {onOpenProfile} {onOpenTrack} {me} />
         {/each}
       </div>
-      {#if feed.length > FEED_PREVIEW_COUNT}
-        <button class="see-all" onclick={() => (feedExpanded = !feedExpanded)}>
-          {feedExpanded ? "Show less ↑" : `Show more (${feed.length - FEED_PREVIEW_COUNT}) →`}
-        </button>
-      {/if}
     {/if}
   </section>
 
@@ -282,43 +269,47 @@ h2 {
   color: var(--accent);
 }
 
+.more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.more-btn:hover {
+  color: var(--fg);
+  background: var(--row-hover);
+}
+
 .list {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
 }
 
-.list.scrollable {
-  max-height: 22rem;
+.feed-list {
+  max-height: 26rem;
   overflow-y: auto;
+  gap: 0.4rem;
+  margin: 0 -0.5rem;
+  padding: 0 0.5rem;
 }
 
-.feed-item {
-  display: flex;
-  flex-direction: column;
+.feed-list > :global(.feed-item) {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.4rem;
 }
 
-.origin {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  background: none;
-  border: none;
-  padding: 0.15rem 0.6rem 0;
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.74rem;
-  font-weight: 600;
-  cursor: pointer;
-  width: fit-content;
-}
-
-.origin:hover {
-  color: var(--fg);
-}
-
-.origin-time {
-  font-weight: 400;
+.feed-list > :global(.feed-item:last-child) {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .muted {

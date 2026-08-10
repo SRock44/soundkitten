@@ -26,11 +26,12 @@
   import PersonListRow from "$lib/components/PersonListRow.svelte";
   import PlaylistListRow from "$lib/components/PlaylistListRow.svelte";
   import PlaylistDetail from "$lib/components/PlaylistDetail.svelte";
+  import FeedRow from "$lib/components/FeedRow.svelte";
   import PlaylistNameModal from "$lib/components/PlaylistNameModal.svelte";
   import { viewMode } from "$lib/stores/viewMode.svelte";
 
   type AuthEvent = { ok: boolean; error: string | null };
-  type View = "home" | "search" | "likes" | "playlists" | "profile";
+  type View = "home" | "search" | "likes" | "playlists" | "profile" | "feed";
 
   // The mini player is the same bundled entry point opened in a second,
   // distinctly-labeled window (this app has no SvelteKit sub-routes at all,
@@ -61,6 +62,7 @@
   let feed = $state<FeedEntry[]>([]);
   let feedLoading = $state(true);
   let feedError = $state("");
+  let feedTracks = $derived(feed.map((e) => e.track));
   // Canonical source is playlistsStore (shared with the context menu's
   // "Add to playlist" picker and PlaylistDetail's rename/delete, several
   // component layers away) -- this is a read view onto it, not a second
@@ -259,6 +261,8 @@
         await Promise.all([ensureLikesLoaded(true), ensurePlaylistsLoaded(true), ensureFeedLoaded(true)]);
       } else if (view === "likes") {
         await ensureLikesLoaded(true);
+      } else if (view === "feed") {
+        await ensureFeedLoaded(true);
       } else if (view === "playlists") {
         if (openPlaylist && openPlaylist.id !== -1) {
           openPlaylist = await api.playlist(openPlaylist.id);
@@ -339,6 +343,10 @@
     } else if (v === "likes") {
       loading = likes.length === 0;
       await ensureLikesLoaded();
+      loading = false;
+    } else if (v === "feed") {
+      loading = feed.length === 0;
+      await ensureFeedLoaded();
       loading = false;
     } else if (v === "playlists") {
       loading = playlists.length === 0;
@@ -518,6 +526,22 @@
         {:else}
           <div class="list">
             {#each likes as t, i}<TrackRow track={t} queue={likes} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />{/each}
+          </div>
+        {/if}
+      {:else if view === "feed"}
+        <button class="back" onclick={goBack}><Icon name="arrow-left" size={14} /> Back</button>
+        <h1>Feed</h1>
+        {#if loading}
+          <p class="muted">Loading...</p>
+        {:else if feedError}
+          <p class="error-text">{feedError}</p>
+        {:else if feed.length === 0}
+          <p class="muted">No recent activity from people you follow.</p>
+        {:else}
+          <div class="list">
+            {#each feed as entry, i (entry.track.id)}
+              <FeedRow {entry} index={i} queue={feedTracks} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} />
+            {/each}
           </div>
         {/if}
       {:else if view === "playlists"}
@@ -768,6 +792,19 @@ h1 {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
+}
+
+.back {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 0.75rem;
+  font: inherit;
 }
 
 .playlists-header {
