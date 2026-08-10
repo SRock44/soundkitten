@@ -40,17 +40,34 @@ const MINI_PLAYER_WINDOW_LABEL: &str = "mini-player";
 /// already works normally there).
 #[cfg(windows)]
 fn disable_default_context_menu(window: &tauri::WebviewWindow) {
-    let _ = window.with_webview(|webview| {
+    let label = window.label().to_string();
+    let result = window.with_webview(move |webview| {
         use webview2_com::ContextMenuRequestedEventHandler;
         use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_11;
         use windows::core::Interface;
 
         unsafe {
-            let Ok(core) = webview.controller().CoreWebView2() else { return };
-            let Ok(core11) = core.cast::<ICoreWebView2_11>() else { return };
-            let handler = ContextMenuRequestedEventHandler::create(Box::new(|_sender, args| {
+            let core = match webview.controller().CoreWebView2() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[context-menu:{label}] CoreWebView2() failed: {e}");
+                    return;
+                }
+            };
+            let core11 = match core.cast::<ICoreWebView2_11>() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[context-menu:{label}] cast to ICoreWebView2_11 failed (WebView2 runtime may be too old): {e}");
+                    return;
+                }
+            };
+            let label_for_handler = label.clone();
+            let handler = ContextMenuRequestedEventHandler::create(Box::new(move |_sender, args| {
+                eprintln!("[context-menu:{label_for_handler}] ContextMenuRequested fired -- suppressing native menu");
                 if let Some(args) = args {
-                    args.SetHandled(true)?;
+                    if let Err(e) = args.SetHandled(true) {
+                        eprintln!("[context-menu:{label_for_handler}] SetHandled(true) failed: {e}");
+                    }
                 }
                 Ok(())
             }));
@@ -58,13 +75,30 @@ fn disable_default_context_menu(window: &tauri::WebviewWindow) {
             // whole life of the window, same as the window itself never
             // explicitly unregistering its close handler.
             let mut token = Default::default();
-            let _ = core11.add_ContextMenuRequested(&handler, &mut token);
+            match core11.add_ContextMenuRequested(&handler, &mut token) {
+                Ok(()) => eprintln!("[context-menu:{label}] add_ContextMenuRequested registered successfully"),
+                Err(e) => eprintln!("[context-menu:{label}] add_ContextMenuRequested failed: {e}"),
+            }
         }
     });
+    if let Err(e) = result {
+        eprintln!("[context-menu:{}] with_webview itself failed: {e}", window.label());
+    }
 }
 
 #[cfg(not(windows))]
 fn disable_default_context_menu(_window: &tauri::WebviewWindow) {}
+
+/// Fire-and-forget log line from the frontend, printed straight to this
+/// process's stderr (visible in the `tauri dev` terminal) -- temporary,
+/// for tracking down exactly what does/doesn't fire on right-click,
+/// since the frontend's own devtools console isn't something the
+/// developer has open by default and asking them to open it and
+/// copy-paste output is slower than just seeing it here directly.
+#[tauri::command]
+fn debug_log(msg: String) {
+    eprintln!("[frontend] {msg}");
+}
 
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -200,6 +234,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_mini_player,
+            debug_log,
             auth::is_logged_in,
             auth::logout,
             auth::start_login,

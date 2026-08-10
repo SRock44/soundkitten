@@ -4,6 +4,7 @@
   import { player } from "../stores/player.svelte";
   import { likes } from "../stores/likes.svelte";
   import { following } from "../stores/following.svelte";
+  import { activeContextMenu } from "../stores/activeContextMenu.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import ContextMenu from "./ContextMenu.svelte";
   import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
@@ -61,19 +62,20 @@
   let menuPos = $state<{ x: number; y: number } | null>(null);
   let showAddToPlaylist = $state(false);
 
+  // Only one TrackRow's menu should ever be visible at once. Each open
+  // claims the shared token (see activeContextMenu.svelte.ts) and
+  // remembers it locally -- if a different row claims a newer one, this
+  // comparison goes false and the menu disappears on its own, purely via
+  // reactivity, no event-close-races involved.
+  let myMenuToken = $state(0);
+  let menuOpen = $derived(menuPos !== null && myMenuToken === activeContextMenu.token);
+
   function openMenu(e: MouseEvent) {
     e.preventDefault();
+    myMenuToken = activeContextMenu.open();
     menuPos = { x: e.clientX, y: e.clientY };
   }
 
-  // WebView2 doesn't reliably deliver the `contextmenu` DOM event once its
-  // own native context menu is disabled at the settings level (confirmed
-  // live: with AreDefaultContextMenusEnabled off, oncontextmenu simply
-  // never fires here, so the app's own menu never opened either -- worse
-  // than the native menu winning, since now nothing did). `mousedown` is a
-  // plain pointer event with no such native-menu-pipeline entanglement, so
-  // it's the reliable trigger; `oncontextmenu` stays wired too as a no-cost
-  // fallback for platforms/runtimes where it does fire normally.
   function onRowMouseDown(e: MouseEvent) {
     if (e.button === 2) openMenu(e);
   }
@@ -85,6 +87,7 @@
    * the (nonexistent, for a click) mouse position. */
   function openMenuAtButton(e: MouseEvent) {
     e.stopPropagation();
+    myMenuToken = activeContextMenu.open();
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     menuPos = { x: rect.right, y: rect.bottom + 4 };
   }
@@ -185,7 +188,7 @@
   </button>
 </div>
 
-{#if menuPos}
+{#if menuOpen && menuPos}
   <ContextMenu x={menuPos.x} y={menuPos.y} items={menuItems} onClose={() => (menuPos = null)} />
 {/if}
 
