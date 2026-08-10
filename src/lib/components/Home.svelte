@@ -2,8 +2,9 @@
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
   import { viewMode } from "../stores/viewMode.svelte";
-  import { isSystemPlaylist, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
+  import { isSystemPlaylist, type FeedEntry, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
+  import FeedRow from "./FeedRow.svelte";
   import PlaylistShelf from "./PlaylistShelf.svelte";
   import Icon from "./Icon.svelte";
   import { delay, syncWithCache } from "../localCache";
@@ -13,6 +14,9 @@
     me,
     likes,
     playlists,
+    feed,
+    feedLoading,
+    feedError,
     onNavigate,
     onOpenProfile,
     onOpenTrack,
@@ -22,7 +26,11 @@
     me: Profile | null;
     likes: Track[];
     playlists: Playlist[];
-    onNavigate: (v: "likes" | "playlists") => void;
+    /** Lifted up to +page.svelte (mirrors likes/playlists) so the global refresh button can force-refetch it too -- see ensureFeedLoaded there. */
+    feed: FeedEntry[];
+    feedLoading: boolean;
+    feedError: string;
+    onNavigate: (v: "likes" | "playlists" | "feed") => void;
     onOpenProfile: (id: number) => void;
     onOpenTrack: (t: Track) => void;
     onOpenPlaylist: (p: Playlist) => void;
@@ -50,29 +58,16 @@
     return "Good evening";
   }
 
-  let feed = $state<Track[]>([]);
-  let feedLoading = $state(true);
-  let feedError = $state("");
-  let feedExpanded = $state(false);
-  const FEED_PREVIEW_COUNT = 5;
+  const FEED_PREVIEW_COUNT = 15;
+  let feedTracks = $derived(feed.map((e) => e.track));
 
   let selections = $state<Selection[]>([]);
   let selectionsLoading = $state(true);
 
-  // Cache-first, and staggered relative to each other -- these used to both
-  // fire immediately on every mount (i.e. every login and every "Home" nav),
-  // on top of the app-level likes/playlists/me/followings burst, which is
-  // exactly the kind of concurrent request pile-up that got the account
-  // rate-limited. A warm cache means most of the time neither of these
-  // touches the network at all.
-  (async () => {
-    await syncWithCache("feed", () => api.feed(), (v) => (feed = v), {
-      onRateLimited: () => syncStatus.rateLimited(),
-      onError: (e) => (feedError = `Failed to load feed: ${e}`),
-    });
-    feedLoading = false;
-  })();
-
+  // Staggered relative to the app-level likes/playlists/me/followings/feed
+  // burst on login/Home-nav, which is exactly the kind of concurrent
+  // request pile-up that got the account rate-limited previously. A warm
+  // cache means most of the time this doesn't touch the network at all.
   (async () => {
     await delay(500);
     await syncWithCache(
@@ -102,7 +97,12 @@
   </div>
 
   <section class="module">
-    <h2>Feed</h2>
+    <div class="section-header">
+      <h2>Feed</h2>
+      <button class="more-btn" onclick={() => onNavigate("feed")} aria-label="Open full feed" title="Open full feed">
+        <Icon name="more" size={16} />
+      </button>
+    </div>
     {#if feedLoading}
       <p class="muted">Loading feed...</p>
     {:else if feedError}
@@ -110,14 +110,11 @@
     {:else if feed.length === 0}
       <p class="muted">No recent activity from people you follow.</p>
     {:else}
-      <div class="list" class:scrollable={feedExpanded}>
-        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as t, i}<TrackRow track={t} queue={feed} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+      <div class="list feed-list">
+        {#each feed.slice(0, FEED_PREVIEW_COUNT) as entry, i (entry.track.id)}
+          <FeedRow {entry} index={i} queue={feedTracks} {onOpenProfile} {onOpenTrack} {me} />
+        {/each}
       </div>
-      {#if feed.length > FEED_PREVIEW_COUNT}
-        <button class="see-all" onclick={() => (feedExpanded = !feedExpanded)}>
-          {feedExpanded ? "Show less ↑" : `Show more (${feed.length - FEED_PREVIEW_COUNT}) →`}
-        </button>
-      {/if}
     {/if}
   </section>
 
@@ -125,7 +122,7 @@
     <section class="module">
       <h2>Recently played</h2>
       <div class="list">
-        {#each player.history as t, i}<TrackRow track={t} queue={player.history} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+        {#each player.history as t, i}<TrackRow track={t} queue={player.history} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
       </div>
     </section>
   {/if}
@@ -139,7 +136,7 @@
       <p class="muted">No likes yet.</p>
     {:else}
       <div class="list">
-        {#each likes.slice(0, 5) as t, i}<TrackRow track={t} queue={likes} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+        {#each likes.slice(0, 5) as t, i}<TrackRow track={t} queue={likes} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
       </div>
     {/if}
   </section>
@@ -272,15 +269,48 @@ h2 {
   color: var(--accent);
 }
 
+.more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.more-btn:hover {
+  color: var(--fg);
+  background: var(--row-hover);
+}
+
 .list {
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
 }
 
-.list.scrollable {
-  max-height: 22rem;
+.feed-list {
+  max-height: 26rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  gap: 0.4rem;
+  margin: 0 -0.5rem;
+  padding: 0 0.5rem;
+}
+
+.feed-list > :global(.feed-item) {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.4rem;
+}
+
+.feed-list > :global(.feed-item:last-child) {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .muted {

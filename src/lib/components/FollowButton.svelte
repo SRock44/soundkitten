@@ -1,6 +1,5 @@
 <script lang="ts">
   import { openUrl } from "@tauri-apps/plugin-opener";
-  import { api } from "../api";
   import { following } from "../stores/following.svelte";
   import { officialAuth } from "../stores/officialAuth.svelte";
   import Icon from "./Icon.svelte";
@@ -8,32 +7,18 @@
   let { userId, permalinkUrl, compact = false }: { userId: number; permalinkUrl: string | null; compact?: boolean } = $props();
 
   let isFollowing = $derived(following.has(userId));
-  let busy = $state(false);
 
-  // Unofficial-API follow writes are DataDome-blocked (confirmed live), but
-  // official OAuth's /me/followings/{id} works cleanly -- see
-  // docs/oauth-migration.md. Connects lazily on first use rather than
-  // upfront, and falls back to opening soundcloud.com if the user declines
-  // to connect or the write itself fails for any reason, same
-  // graceful-degradation pattern as before this existed.
+  // The connect -> write -> update-store flow lives on the shared
+  // `following` store (see its doc comment). Falls back to opening
+  // soundcloud.com if the user declines to connect or the write itself
+  // fails for any reason, same graceful-degradation pattern as before this
+  // existed.
   async function toggleFollow(e: MouseEvent) {
     e.stopPropagation();
-    if (busy) return;
-    busy = true;
-    const next = !isFollowing;
     try {
-      const connected = await officialAuth.ensureConnected();
-      if (!connected) {
-        if (permalinkUrl) openUrl(permalinkUrl);
-        return;
-      }
-      if (next) await api.followUserV2(userId);
-      else await api.unfollowUserV2(userId);
-      following.set(userId, next);
+      if ((await following.toggle({ id: userId })) === "declined" && permalinkUrl) openUrl(permalinkUrl);
     } catch {
       if (permalinkUrl) openUrl(permalinkUrl);
-    } finally {
-      busy = false;
     }
   }
 </script>
@@ -43,7 +28,7 @@
   class:compact
   class:following={isFollowing}
   onclick={toggleFollow}
-  disabled={busy || (!permalinkUrl && !officialAuth.connected)}
+  disabled={following.isBusy(userId) || (!permalinkUrl && !officialAuth.connected)}
   aria-label={isFollowing ? "Unfollow" : "Follow"}
   title={isFollowing ? "Unfollow" : "Follow"}
 >

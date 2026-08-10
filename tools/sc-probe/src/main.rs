@@ -55,6 +55,13 @@ enum Command {
         #[arg(long, default_value_t = 8765)]
         port: u16,
     },
+    /// Verify official-API playlist create/update/delete, and dump raw
+    /// /stream JSON to confirm the repost-origin field shape (v0.2.1
+    /// playlist CRUD + feed-origin work)
+    PlaylistFeedSpike {
+        #[arg(long, default_value_t = 8765)]
+        port: u16,
+    },
 }
 
 async fn run_oauth_checks(port: u16) -> Result<()> {
@@ -455,6 +462,80 @@ async fn run_oauth_checks(port: u16) -> Result<()> {
     Ok(())
 }
 
+/// Verifies playlist create/update/delete against the official API (never
+/// tried in this codebase before -- likes/follows writes were confirmed via
+/// the sweep above, but playlist mutation is a genuine unknown), and dumps
+/// raw /stream JSON so the real repost-origin field shape can be read off
+/// directly rather than assumed. Cleans up everything it creates.
+async fn run_playlist_feed_spike(port: u16) -> Result<()> {
+    let _ = dotenvy::from_filename(".env.local");
+    let client_id = std::env::var("SC_CLIENT_ID").context("SC_CLIENT_ID not set (put it in .env.local)")?;
+    let client_secret = std::env::var("SC_CLIENT_SECRET").context("SC_CLIENT_SECRET not set (put it in .env.local)")?;
+
+    println!("=== sc-probe: playlist CRUD + feed-origin verification ===\n");
+
+    let tokens = oauth::run_oauth_flow(&client_id, &client_secret, port).await?;
+    println!("access_token acquired.\n");
+    let client = reqwest::Client::new();
+    let at = &tokens.access_token;
+
+    // --- Playlist CRUD ---
+    println!("--- Playlist create/update/delete ---\n");
+
+    let create_body = serde_json::json!({ "playlist": { "title": "sc-probe test (safe to delete)", "sharing": "private", "tracks": [] } });
+    let (status, body) = oauth::official_write_json(&client, reqwest::Method::POST, "/playlists", at, &create_body).await?;
+    println!("POST /playlists (empty tracks) -> {status}: {}", truncate(&body.to_string(), 400));
+    let Some(playlist_id) = body.get("id").and_then(|v| v.as_i64()) else {
+        bail!("playlist creation didn't return an id -- can't continue the spike. Response above is the thing to read.");
+    };
+    println!("    created playlist id = {playlist_id}\n");
+
+    // Need a real track id to test the tracks array with -- reuse a liked track.
+    let likes = oauth::authed_official_get(&client, "/me/likes/tracks", at).await.ok();
+    let track_id = likes.as_ref().and_then(|v| v.as_array()).and_then(|a| a.first()).and_then(|t| t.get("id")).and_then(|v| v.as_i64());
+
+    if let Some(track_id) = track_id {
+        let update_body = serde_json::json!({ "playlist": { "title": "sc-probe test (safe to delete)", "tracks": [{ "id": track_id }] } });
+        let (status, body) = oauth::official_write_json(&client, reqwest::Method::PUT, &format!("/playlists/{playlist_id}"), at, &update_body).await?;
+        println!("PUT /playlists/{playlist_id} (add track {track_id}) -> {status}: {}", truncate(&body.to_string(), 400));
+        let returned_tracks = body.pointer("/tracks").and_then(|t| t.as_array()).map(|a| a.len());
+        println!("    tracks array length in response: {returned_tracks:?}\n");
+
+        let clear_body = serde_json::json!({ "playlist": { "title": "sc-probe test (safe to delete)", "tracks": [] } });
+        let (status, body) = oauth::official_write_json(&client, reqwest::Method::PUT, &format!("/playlists/{playlist_id}"), at, &clear_body).await?;
+        println!("PUT /playlists/{playlist_id} (clear tracks, confirms whole-array-replace) -> {status}: {}", truncate(&body.to_string(), 300));
+        println!();
+    } else {
+        println!("(no liked track available to test the tracks array with -- like a track first for full coverage)\n");
+    }
+
+    let (status, body) = oauth::official_write(&client, reqwest::Method::DELETE, &format!("/playlists/{playlist_id}"), at).await?;
+    println!("DELETE /playlists/{playlist_id} (cleanup) -> {status}: {}\n", truncate(&body.to_string(), 200));
+
+    // --- Feed origin shape ---
+    println!("--- /stream item shapes (for FeedItem/FeedEntry field names) ---\n");
+    match oauth::authed_official_get(&client, "/me/activities?limit=20", at).await {
+        Ok(body) => {
+            let collection = body.get("collection").and_then(|c| c.as_array()).cloned().unwrap_or_default();
+            println!("collection length: {}", collection.len());
+            let repost = collection.iter().find(|i| i.get("type").and_then(|t| t.as_str()).is_some_and(|t| t.contains("repost")));
+            let plain = collection.iter().find(|i| i.get("type").and_then(|t| t.as_str()).is_some_and(|t| !t.contains("repost")));
+            match repost {
+                Some(item) => println!("\nfirst REPOST item (full JSON, read the reposter/timestamp field names off this):\n{}", serde_json::to_string_pretty(item).unwrap_or_default()),
+                None => println!("\nno repost item found in the first 20 activities -- widen the search or try again later"),
+            }
+            match plain {
+                Some(item) => println!("\nfirst PLAIN (non-repost) item (full JSON, for comparison):\n{}", serde_json::to_string_pretty(item).unwrap_or_default()),
+                None => println!("\nno plain item found in the first 20 activities"),
+            }
+        }
+        Err(e) => println!("GET /me/activities failed: {e:#}"),
+    }
+
+    println!("\n=== spike complete -- read the raw JSON above to write FeedEntry/playlist-write field shapes ===");
+    Ok(())
+}
+
 fn get_oauth_token(no_auth: bool) -> Result<Option<String>> {
     if no_auth {
         return Ok(None);
@@ -667,8 +748,10 @@ async fn check_download(
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    if let Some(Command::Oauth { port }) = &args.command {
-        return run_oauth_checks(*port).await;
+    match &args.command {
+        Some(Command::Oauth { port }) => return run_oauth_checks(*port).await,
+        Some(Command::PlaylistFeedSpike { port }) => return run_playlist_feed_spike(*port).await,
+        None => {}
     }
 
     let client = reqwest::Client::builder()

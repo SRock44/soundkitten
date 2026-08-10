@@ -1,8 +1,13 @@
 <script lang="ts">
-  import type { Track } from "../types";
+  import type { Profile, Track } from "../types";
   import { formatDuration, isPlayable } from "../types";
   import { player } from "../stores/player.svelte";
+  import { likes } from "../stores/likes.svelte";
+  import { following } from "../stores/following.svelte";
+  import { activeContextMenu } from "../stores/activeContextMenu.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import ContextMenu from "./ContextMenu.svelte";
+  import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
   import Icon from "./Icon.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
@@ -12,12 +17,21 @@
     index,
     onOpenProfile,
     onOpenTrack,
+    me = null,
+    onRemoveFromPlaylist,
+    onOpenedOnSoundCloud,
   }: {
     track: Track;
     queue?: Track[];
     index?: number;
     onOpenProfile?: (id: number) => void;
     onOpenTrack?: (t: Track) => void;
+    /** Logged-in user, needed only to gate the "Add to playlist" menu item -- omit to hide it. */
+    me?: Profile | null;
+    /** Only passed from PlaylistDetail, for a playlist the viewer owns. */
+    onRemoveFromPlaylist?: (t: Track) => void;
+    /** Fired when a like/follow decline or failure falls back to opening the track on soundcloud.com. */
+    onOpenedOnSoundCloud?: () => void;
   } = $props();
 
   function openArtist(e: MouseEvent) {
@@ -46,10 +60,66 @@
   // globally for the same keypress.
 
   let menuPos = $state<{ x: number; y: number } | null>(null);
+  let showAddToPlaylist = $state(false);
+
+  // Only one TrackRow's menu should ever be visible at once. Each open
+  // claims the shared token (see activeContextMenu.svelte.ts) and
+  // remembers it locally -- if a different row claims a newer one, this
+  // comparison goes false and the menu disappears on its own, purely via
+  // reactivity, no event-close-races involved.
+  let myMenuToken = $state(0);
+  let menuOpen = $derived(menuPos !== null && myMenuToken === activeContextMenu.token);
 
   function openMenu(e: MouseEvent) {
     e.preventDefault();
+    myMenuToken = activeContextMenu.open();
     menuPos = { x: e.clientX, y: e.clientY };
+  }
+
+  function onRowMouseDown(e: MouseEvent) {
+    if (e.button === 2) openMenu(e);
+  }
+
+  /** Guaranteed-to-work trigger for the same menu, via a plain left-click
+   * on a visible button -- no dependency on WebView2's right-click/
+   * contextmenu handling at all, so it can't be affected by whatever that
+   * turns out to need. Anchors the menu under the button rather than at
+   * the (nonexistent, for a click) mouse position. */
+  function openMenuAtButton(e: MouseEvent) {
+    e.stopPropagation();
+    myMenuToken = activeContextMenu.open();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menuPos = { x: rect.right, y: rect.bottom + 4 };
+  }
+
+  let isLiked = $derived(likes.has(track.id));
+  let isFollowingArtist = $derived(track.user ? following.has(track.user.id) : false);
+
+  // The connect -> write -> update-store flow lives on the shared
+  // likes/following stores (see their doc comments); this just decides
+  // what to do on decline/failure, same pattern as PlayerBar/TrackDetail.
+  async function toggleLike() {
+    try {
+      if ((await likes.toggle(track)) === "declined" && track.permalink_url) {
+        openUrl(track.permalink_url);
+        onOpenedOnSoundCloud?.();
+      }
+    } catch (e) {
+      player.error = `Failed to ${isLiked ? "unlike" : "like"} track: ${e}`;
+    }
+  }
+
+  async function toggleFollowArtist() {
+    const user = track.user;
+    if (!user) return;
+    try {
+      if ((await following.toggle(user)) === "declined" && user.permalink_url) {
+        openUrl(user.permalink_url);
+        onOpenedOnSoundCloud?.();
+      }
+    } catch (e) {
+      player.error = `Failed to ${isFollowingArtist ? "unfollow" : "follow"}: ${e}`;
+    }
   }
 
   const menuItems = $derived([
@@ -61,9 +131,13 @@
         ]
       : []),
     ...(onOpenTrack ? [{ label: "View track", onSelect: () => onOpenTrack!(track) }] : []),
+    { label: isLiked ? "Unlike" : "Like", onSelect: toggleLike },
     ...(track.user && onOpenProfile
       ? [{ label: "Go to artist", onSelect: () => onOpenProfile!(track.user!.id) }]
       : []),
+    ...(track.user ? [{ label: isFollowingArtist ? "Unfollow artist" : "Follow artist", onSelect: toggleFollowArtist }] : []),
+    ...(me ? [{ label: "Add to playlist...", onSelect: () => (showAddToPlaylist = true) }] : []),
+    ...(onRemoveFromPlaylist ? [{ label: "Remove from playlist", danger: true, onSelect: () => onRemoveFromPlaylist!(track) }] : []),
     ...(track.permalink_url
       ? [{ label: "Copy link", onSelect: () => writeText(track.permalink_url!) }]
       : []),
@@ -79,6 +153,7 @@
   onclick={handleRowClick}
   onkeydown={(e) => e.key === "Enter" && handleRowClick()}
   oncontextmenu={openMenu}
+  onmousedown={onRowMouseDown}
 >
   {#if index !== undefined}
     <span class="index">
@@ -108,10 +183,17 @@
     <button class="artist" onclick={openArtist}>{track.user?.username ?? "Unknown artist"}</button>
   </span>
   <span class="duration">{formatDuration(track.duration)}</span>
+  <button class="more-btn" onclick={openMenuAtButton} aria-label="More options" title="More options">
+    <Icon name="more" size={15} />
+  </button>
 </div>
 
-{#if menuPos}
+{#if menuOpen && menuPos}
   <ContextMenu x={menuPos.x} y={menuPos.y} items={menuItems} onClose={() => (menuPos = null)} />
+{/if}
+
+{#if showAddToPlaylist}
+  <AddToPlaylistModal {track} {me} onClose={() => (showAddToPlaylist = false)} />
 {/if}
 
 <style>
@@ -257,5 +339,31 @@
   color: var(--muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.row:hover .more-btn,
+.row:focus-within .more-btn {
+  opacity: 1;
+}
+
+.more-btn:hover {
+  background: var(--artwork-bg);
+  color: var(--fg);
 }
 </style>

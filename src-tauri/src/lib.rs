@@ -10,6 +10,85 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 const MAIN_WINDOW_LABEL: &str = "main";
 const MINI_PLAYER_WINDOW_LABEL: &str = "mini-player";
 
+/// WebView2's own native right-click menu (Back/Forward/Reload/Save as/
+/// Print/Inspect) is enabled by default and does NOT reliably get
+/// suppressed by a page-level `contextmenu` handler's `preventDefault()`
+/// -- confirmed live, the app's custom per-track context menu
+/// (TrackRow.svelte) never got a chance to render, the native WebView2
+/// menu won every time regardless.
+///
+/// The first fix attempted here was `ICoreWebView2Settings.
+/// SetAreDefaultContextMenusEnabled(false)` -- WRONG, and confirmed live
+/// to make things worse: per Microsoft's own WebView2 docs
+/// (https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/context-menus),
+/// "If AreDefaultContextMenusEnabled is set to False ... the
+/// ContextMenuRequested event won't be raised" -- it doesn't just hide
+/// the native menu, it tears down the whole native context-menu request
+/// pipeline, and empirically that also meant the page's own
+/// `contextmenu`/right-button `mousedown` events stopped arriving at all
+/// (right-click did nothing whatsoever, not even the app's own menu).
+///
+/// The actual correct API for "build your own context-menu UI" (this
+/// app's exact use case, and Microsoft's own docs frame it this way) is
+/// `ICoreWebView2_11::add_ContextMenuRequested`: a native hook that fires
+/// on every right-click independent of the DOM's own `contextmenu`
+/// event, whose args expose `Handled` -- set it `true` to suppress only
+/// WebView2's native menu UI, leaving the page's own JS event handling
+/// (TrackRow.svelte's `oncontextmenu`/`onmousedown`) completely
+/// untouched. No-op on macOS/Linux (WKWebView/WebKitGTK don't have this
+/// native-menu-vs-DOM-event entanglement, and page-level preventDefault
+/// already works normally there).
+#[cfg(windows)]
+fn disable_default_context_menu(window: &tauri::WebviewWindow) {
+    let label = window.label().to_string();
+    let result = window.with_webview(move |webview| {
+        use webview2_com::ContextMenuRequestedEventHandler;
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_11;
+        use windows::core::Interface;
+
+        unsafe {
+            let core = match webview.controller().CoreWebView2() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[context-menu:{label}] CoreWebView2() failed: {e}");
+                    return;
+                }
+            };
+            let core11 = match core.cast::<ICoreWebView2_11>() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("[context-menu:{label}] cast to ICoreWebView2_11 failed (WebView2 runtime may be too old): {e}");
+                    return;
+                }
+            };
+            let label_for_handler = label.clone();
+            let handler = ContextMenuRequestedEventHandler::create(Box::new(move |_sender, args| {
+                eprintln!("[context-menu:{label_for_handler}] ContextMenuRequested fired -- suppressing native menu");
+                if let Some(args) = args {
+                    if let Err(e) = args.SetHandled(true) {
+                        eprintln!("[context-menu:{label_for_handler}] SetHandled(true) failed: {e}");
+                    }
+                }
+                Ok(())
+            }));
+            // Token intentionally not retained -- this hook lives for the
+            // whole life of the window, same as the window itself never
+            // explicitly unregistering its close handler.
+            let mut token = Default::default();
+            match core11.add_ContextMenuRequested(&handler, &mut token) {
+                Ok(()) => eprintln!("[context-menu:{label}] add_ContextMenuRequested registered successfully"),
+                Err(e) => eprintln!("[context-menu:{label}] add_ContextMenuRequested failed: {e}"),
+            }
+        }
+    });
+    if let Err(e) = result {
+        eprintln!("[context-menu:{}] with_webview itself failed: {e}", window.label());
+    }
+}
+
+#[cfg(not(windows))]
+fn disable_default_context_menu(_window: &tauri::WebviewWindow) {}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = win.show();
@@ -49,7 +128,7 @@ async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
         // users who want a bigger widget can drag it larger -- the
         // frontend layout (MiniPlayer.svelte) is flex-based specifically
         // so it reflows sanely rather than just clipping.
-        WebviewWindowBuilder::new(&app, MINI_PLAYER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
+        let win = WebviewWindowBuilder::new(&app, MINI_PLAYER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
             .title("SoundKitten")
             .inner_size(320.0, 148.0)
             .min_inner_size(260.0, 120.0)
@@ -57,6 +136,7 @@ async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
             .decorations(false)
             .build()
             .map_err(|e| e.to_string())?;
+        disable_default_context_menu(&win);
     }
     if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = main.hide();
@@ -67,6 +147,16 @@ async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin registered (Tauri's own guidance) --
+        // when a second SoundKitten process launches, this detects the
+        // already-running one, hands it the new launch's argv/cwd here,
+        // and the second process exits on its own without ever opening a
+        // window. Without this, nothing stopped multiple instances from
+        // piling up (seen live: three at once on a Windows 10 machine),
+        // each with its own playback state, tray icon, and mini player.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -74,6 +164,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("sc-stream", playback::handler)
         .setup(|app| {
+            if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                disable_default_context_menu(&main);
+            }
+
             // Tray icon so closing the window (see the CloseRequested
             // handler below) can hide it instead of quitting -- playback
             // keeps running in the hidden window, and this is how the user
@@ -180,6 +274,9 @@ pub fn run() {
             official_oauth::sc_unlike_playlist_v2,
             official_oauth::sc_follow_user_v2,
             official_oauth::sc_unfollow_user_v2,
+            official_oauth::sc_create_playlist_v2,
+            official_oauth::sc_update_playlist_v2,
+            official_oauth::sc_delete_playlist_v2,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

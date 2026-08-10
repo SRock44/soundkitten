@@ -9,6 +9,7 @@
 //! only ever calls PROXY_BASE (a small server the developer controls, see
 //! services/oauth-proxy/), which is the only place client_secret exists.
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -355,6 +356,27 @@ async fn official_write(method: reqwest::Method, path: &str) -> Result<(), Strin
     Err(format!("{status}: {body}"))
 }
 
+/// Same as official_write but sends a JSON body and parses a typed
+/// response -- needed for playlist create/update, which (unlike the
+/// bodiless like/follow writes above) both take and return a real object.
+async fn official_write_json<T: DeserializeOwned>(method: reqwest::Method, path: &str, body: &serde_json::Value) -> Result<T, String> {
+    let access_token = get_valid_access_token().await?;
+    let client = http_client();
+    let resp = client
+        .request(method, format!("{OFFICIAL_API}{path}"))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        return Err(format!("{status}: {}", if text.is_empty() { "<empty body>" } else { &text }));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("{status} but body didn't match the expected shape: {e} (body: {text})"))
+}
+
 #[tauri::command]
 pub async fn sc_like_track_v2(track_id: i64) -> Result<(), String> {
     official_write(reqwest::Method::POST, &format!("/likes/tracks/{track_id}")).await
@@ -383,4 +405,42 @@ pub async fn sc_follow_user_v2(user_id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn sc_unfollow_user_v2(user_id: i64) -> Result<(), String> {
     official_write(reqwest::Method::DELETE, &format!("/me/followings/{user_id}")).await
+}
+
+// --- Playlist CRUD, official API only -- no unofficial equivalent was ever
+// wired up for these (playlists were read-only until now). SoundCloud's
+// classic API updates a playlist's track list by replacing the whole
+// `tracks` array in one PUT -- there's no separate add/remove-single-track
+// endpoint, so rename/add-track/remove-track all go through
+// sc_update_playlist_v2, only the array differs client-side. Shape follows
+// SoundCloud's long-documented classic API (`{"playlist": {...}}` wrapper,
+// tracks as `[{"id": ...}]`); run `sc-probe playlist-feed-spike` to
+// live-confirm against a real account if this ever needs re-checking.
+
+#[tauri::command]
+pub async fn sc_create_playlist_v2(title: String, track_ids: Vec<i64>) -> Result<crate::soundcloud::models::Playlist, String> {
+    let body = serde_json::json!({
+        "playlist": {
+            "title": title,
+            "sharing": "private",
+            "tracks": track_ids.iter().map(|id| serde_json::json!({ "id": id })).collect::<Vec<_>>(),
+        }
+    });
+    official_write_json(reqwest::Method::POST, "/playlists", &body).await
+}
+
+#[tauri::command]
+pub async fn sc_update_playlist_v2(playlist_id: i64, title: String, track_ids: Vec<i64>) -> Result<crate::soundcloud::models::Playlist, String> {
+    let body = serde_json::json!({
+        "playlist": {
+            "title": title,
+            "tracks": track_ids.iter().map(|id| serde_json::json!({ "id": id })).collect::<Vec<_>>(),
+        }
+    });
+    official_write_json(reqwest::Method::PUT, &format!("/playlists/{playlist_id}"), &body).await
+}
+
+#[tauri::command]
+pub async fn sc_delete_playlist_v2(playlist_id: i64) -> Result<(), String> {
+    official_write(reqwest::Method::DELETE, &format!("/playlists/{playlist_id}")).await
 }

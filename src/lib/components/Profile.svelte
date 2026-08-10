@@ -16,12 +16,15 @@
     onOpenTrack,
     onOpenPlaylist,
     isOwnProfile = false,
+    me = null,
   }: {
     userId: number;
     onOpenProfile: (id: number) => void;
     onOpenTrack: (t: Track) => void;
     onOpenPlaylist: (p: Playlist) => void;
     isOwnProfile?: boolean;
+    /** Logged-in user, threaded to TrackRow's context menu only for the "Add to playlist" gate -- unrelated to the profile being viewed. */
+    me?: Profile | null;
   } = $props();
 
   type Tab = "all" | "tracks" | "reposts" | "playlists";
@@ -152,7 +155,7 @@
           <p class="muted">Nothing here yet.</p>
         {:else}
           <div class="list">
-            {#each all as t, i}<TrackRow track={t} queue={all} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+            {#each all as t, i}<TrackRow track={t} queue={all} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
           </div>
         {/if}
       {:else if tab === "tracks"}
@@ -160,7 +163,7 @@
           <p class="muted">No public tracks.</p>
         {:else}
           <div class="list">
-            {#each tracks as t, i}<TrackRow track={t} queue={tracks} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+            {#each tracks as t, i}<TrackRow track={t} queue={tracks} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
           </div>
         {/if}
       {:else if tab === "reposts"}
@@ -168,7 +171,7 @@
           <p class="muted">No reposts.</p>
         {:else}
           <div class="list">
-            {#each reposts as t, i}<TrackRow track={t} queue={reposts} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+            {#each reposts as t, i}<TrackRow track={t} queue={reposts} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
           </div>
         {/if}
       {:else if tab === "playlists"}

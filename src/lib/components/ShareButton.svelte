@@ -2,7 +2,7 @@
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import Icon from "./Icon.svelte";
 
-  let { url, label = "Share" }: { url: string | null; label?: string } = $props();
+  let { url, label = "Share", compact = false }: { url: string | null; label?: string; compact?: boolean } = $props();
 
   let copied = $state(false);
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -21,9 +21,9 @@
   }
 </script>
 
-<button class="share-btn" class:copied onclick={share} disabled={!url} aria-label={label} title="Copy SoundCloud link">
-  <Icon name={copied ? "check" : "share"} size={14} />
-  <span>{copied ? "Copied!" : label}</span>
+<button class="share-btn" class:compact class:copied onclick={share} disabled={!url} aria-label={copied ? "Copied!" : label} title="Copy SoundCloud link">
+  <Icon name={copied ? "check" : "share"} size={compact ? 15 : 14} />
+  {#if !compact}<span>{copied ? "Copied!" : label}</span>{/if}
 </button>
 
 <style>
@@ -54,5 +54,25 @@
 .share-btn:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Mirrors FollowButton.svelte's .compact treatment -- icon-only, no
+   border, for tight action rows like FeedPost's action bar. */
+.share-btn.compact {
+  padding: 0.4rem;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+}
+
+.share-btn.compact:hover {
+  color: var(--fg);
+  background: var(--row-hover);
+  border-color: transparent;
+}
+
+.share-btn.compact.copied {
+  color: var(--accent);
+  background: none;
 }
 </style>

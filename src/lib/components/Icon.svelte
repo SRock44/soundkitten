@@ -35,7 +35,13 @@
     | "refresh"
     | "pip"
     | "grid"
-    | "list";
+    | "list"
+    | "home"
+    | "playlists"
+    | "plus"
+    | "trash"
+    | "pencil"
+    | "more";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -49,10 +55,10 @@
   {:else if name === "heart-filled"}
     <path d="M10 17s-6.5-4-6.5-9A3.9 3.9 0 0 1 10 5.5 3.9 3.9 0 0 1 16.5 8c0 5-6.5 9-6.5 9Z" fill="currentColor" />
   {:else if name === "repost"}
-    <polyline points="4 7 4 13 10 13" />
-    <polyline points="16 13 16 7 10 7" />
-    <path d="M4 13a6 6 0 0 0 10.5 3.8" />
-    <path d="M16 7a6 6 0 0 0-10.5-3.8" />
+    <path d="M4 7.5h9a3 3 0 0 1 3 3v1" />
+    <polyline points="10.5 4.5 13.5 7.5 10.5 10.5" />
+    <path d="M16 12.5H7a3 3 0 0 1-3-3v-1" />
+    <polyline points="9.5 15.5 6.5 12.5 9.5 9.5" />
   {:else if name === "comment"}
     <path d="M3 4.5h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8l-3.5 3v-3H3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z" />
   {:else if name === "play"}
@@ -169,5 +175,25 @@
     <line x1="8" y1="10" x2="17" y2="10" />
     <rect x="3" y="13" width="2.5" height="2.5" rx="0.6" fill="currentColor" stroke="none" />
     <line x1="8" y1="14.25" x2="17" y2="14.25" />
+  {:else if name === "home"}
+    <path d="M3.5 9.5 10 3.5l6.5 6" />
+    <path d="M5 8v7.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8" />
+    <path d="M8 16.5V12h4v4.5" />
+  {:else if name === "playlists"}
+    <rect x="2.5" y="6.5" width="11" height="10" rx="1.4" />
+    <path d="M5.5 6.5V4.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1h-1.5" />
+  {:else if name === "plus"}
+    <line x1="10" y1="4" x2="10" y2="16" />
+    <line x1="4" y1="10" x2="16" y2="10" />
+  {:else if name === "trash"}
+    <path d="M4.5 6h11" />
+    <path d="M8 6V4.5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1V6" />
+    <path d="M5.5 6l.7 9.2a1 1 0 0 0 1 .93h5.6a1 1 0 0 0 1-.93L14.5 6" />
+  {:else if name === "pencil"}
+    <path d="M12.8 3.8a1.6 1.6 0 0 1 2.3 2.3L6.5 14.6l-3 .7.7-3Z" />
+  {:else if name === "more"}
+    <circle cx="4.5" cy="10" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="15.5" cy="10" r="1.3" fill="currentColor" stroke="none" />
   {/if}
 </svg>
