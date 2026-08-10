@@ -204,7 +204,7 @@
       <Icon name="plus" size={16} />
     </button>
     <span class="spacer"></span>
-    <ShareButton url={track.permalink_url} label="" />
+    <ShareButton url={track.permalink_url} compact />
   </div>
 
   <form class="quick-comment" onsubmit={(e) => { e.preventDefault(); submitComment(); }}>
