@@ -89,17 +89,6 @@ fn disable_default_context_menu(window: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 fn disable_default_context_menu(_window: &tauri::WebviewWindow) {}
 
-/// Fire-and-forget log line from the frontend, printed straight to this
-/// process's stderr (visible in the `tauri dev` terminal) -- temporary,
-/// for tracking down exactly what does/doesn't fire on right-click,
-/// since the frontend's own devtools console isn't something the
-/// developer has open by default and asking them to open it and
-/// copy-paste output is slower than just seeing it here directly.
-#[tauri::command]
-fn debug_log(msg: String) {
-    eprintln!("[frontend] {msg}");
-}
-
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = win.show();
@@ -234,7 +223,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             open_mini_player,
-            debug_log,
             auth::is_logged_in,
             auth::logout,
             auth::start_login,

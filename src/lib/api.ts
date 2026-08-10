@@ -3,8 +3,6 @@ import type { Comment, FeedEntry, Playlist, Profile, SearchResultItem, Selection
 
 export const api = {
   openMiniPlayer: () => invoke<void>("open_mini_player"),
-  /** Temporary: pipes a log line straight to the `tauri dev` terminal, for tracking down the right-click context-menu issue. */
-  debugLog: (msg: string) => invoke<void>("debug_log", { msg }),
   isLoggedIn: () => invoke<boolean>("is_logged_in"),
   startLogin: () => invoke<void>("start_login"),
   verifyAuth: () => invoke<boolean>("verify_auth"),
