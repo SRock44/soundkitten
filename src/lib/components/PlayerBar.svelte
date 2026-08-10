@@ -3,7 +3,6 @@
   import { api } from "../api";
   import { likes } from "../stores/likes.svelte";
   import { following } from "../stores/following.svelte";
-  import { officialAuth } from "../stores/officialAuth.svelte";
   import { formatDuration } from "../types";
   import type { MiniPlayerCommand, MiniPlayerState, Track } from "../types";
   import Icon from "./Icon.svelte";
@@ -31,8 +30,6 @@
   let isPlaying = $state(false);
   let showQueue = $state(false);
   let dragIndex = $state<number | null>(null);
-  let likeBusy = $state(false);
-  let followBusy = $state(false);
   // `ontimeupdate` only fires a few times a second (browsers throttle it,
   // not a per-frame event), and the scrubber fill had no CSS transition --
   // every tick just teleported the width straight to the new value, which
@@ -64,28 +61,18 @@
   let isLiked = $derived(player.current ? likes.has(player.current.id) : false);
   let isFollowing = $derived(player.current?.user ? following.has(player.current.user.id) : false);
 
-  // Unofficial-API like writes are DataDome-blocked (confirmed live), but
-  // official OAuth's /likes/tracks/{id} works cleanly -- see
-  // docs/oauth-migration.md. Connects lazily on first use, falling back to
-  // opening the track on soundcloud.com if the user declines to connect.
+  // Unofficial-API like/follow writes are DataDome-blocked (confirmed
+  // live), but official OAuth works cleanly -- see docs/oauth-migration.md.
+  // The connect -> write -> update-store flow itself lives on the
+  // likes/following stores (shared with TrackDetail.svelte and TrackRow's
+  // context menu); this just decides what to do on decline/failure.
   async function toggleLike() {
     const track = player.current;
-    if (!track || likeBusy) return;
-    likeBusy = true;
-    const next = !likes.has(track.id);
+    if (!track) return;
     try {
-      const connected = await officialAuth.ensureConnected();
-      if (!connected) {
-        openOnSoundCloud();
-        return;
-      }
-      if (next) await api.likeTrackV2(track.id);
-      else await api.unlikeTrackV2(track.id);
-      likes.set(track.id, next);
+      if ((await likes.toggle(track)) === "declined") openOnSoundCloud();
     } catch (e) {
-      player.error = `Failed to ${next ? "like" : "unlike"} track: ${e}`;
-    } finally {
-      likeBusy = false;
+      player.error = `Failed to ${likes.has(track.id) ? "unlike" : "like"} track: ${e}`;
     }
   }
 
@@ -97,23 +84,12 @@
 
   /** Mirrors toggleLike() above, for the mini player's "toggleFollow" command -- see the emitter/listener effects below. */
   async function toggleFollowForCurrent() {
-    const track = player.current;
-    if (!track?.user || followBusy) return;
-    followBusy = true;
-    const next = !following.has(track.user.id);
+    const user = player.current?.user;
+    if (!user) return;
     try {
-      const connected = await officialAuth.ensureConnected();
-      if (!connected) {
-        openOnSoundCloud();
-        return;
-      }
-      if (next) await api.followUserV2(track.user.id);
-      else await api.unfollowUserV2(track.user.id);
-      following.set(track.user.id, next);
+      if ((await following.toggle(user)) === "declined") openOnSoundCloud();
     } catch (e) {
-      player.error = `Failed to ${next ? "follow" : "unfollow"}: ${e}`;
-    } finally {
-      followBusy = false;
+      player.error = `Failed to ${following.has(user.id) ? "unfollow" : "follow"}: ${e}`;
     }
   }
 
@@ -443,7 +419,7 @@
         class="like-btn"
         class:active={isLiked}
         onclick={toggleLike}
-        disabled={!player.current || likeBusy}
+        disabled={!player.current || likes.isBusy(player.current.id)}
         aria-label={isLiked ? "Unlike" : "Like"}
         title={isLiked ? "Unlike" : "Like"}
       >
