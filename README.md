@@ -24,9 +24,14 @@ SoundCloud dropped their native Windows desktop app entirely. On Windows 11, the
 
 - Search, stream, like, comment, and browse playlists/likes/followers just like the web app
 - Home feed with SoundCloud's own curated sections (Trending by genre, personalized mixes, etc.)
+- A compact mini player (toggle from the app or the system tray) with SoundCloud's real per-track waveform, draggable and resizable
 - Shuffle and repeat, drag-to-reorder queue, and playback state that survives an app restart
 - Clean, native window chrome, no bundled browser UI, no bloat
 - Auto-updates, checked on launch (opt-in per update, never silent)
+
+<p align="center">
+  <img src="assets/mini-player.gif" alt="SoundKitten mini player" width="360" />
+</p>
 
 ## Download
 
