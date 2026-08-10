@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Comment, Playlist, Profile, Selection, Track, UserComment } from "./types";
+import type { Comment, Playlist, Profile, SearchResultItem, Selection, Track, UserComment } from "./types";
 
 export const api = {
   openMiniPlayer: () => invoke<void>("open_mini_player"),
@@ -14,6 +14,7 @@ export const api = {
   userProfile: (userId: number) => invoke<Profile>("sc_user_profile", { userId }),
   userTracks: (userId: number) => invoke<Track[]>("sc_user_tracks", { userId }),
   searchUsers: (query: string) => invoke<Profile[]>("sc_search_users", { query }),
+  searchAll: (query: string) => invoke<SearchResultItem[]>("sc_search_all", { query }),
   feed: () => invoke<Track[]>("sc_feed"),
   likeTrack: (trackId: number) => invoke<void>("sc_like_track", { trackId }),
   unlikeTrack: (trackId: number) => invoke<void>("sc_unlike_track", { trackId }),

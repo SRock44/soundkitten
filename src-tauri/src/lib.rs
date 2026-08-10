@@ -154,6 +154,7 @@ pub fn run() {
             soundcloud::commands::sc_user_profile,
             soundcloud::commands::sc_user_tracks,
             soundcloud::commands::sc_search_users,
+            soundcloud::commands::sc_search_all,
             soundcloud::commands::sc_feed,
             soundcloud::commands::sc_like_track,
             soundcloud::commands::sc_unlike_track,

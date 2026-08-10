@@ -20,7 +20,11 @@
   import { syncStatus } from "$lib/stores/syncStatus.svelte";
   import { checkForUpdates } from "$lib/updater";
   import { clearCached, delay, loadCached, saveCached, syncWithCache } from "$lib/localCache";
-  import type { Playlist, Profile, SystemPlaylist, Track } from "$lib/types";
+  import type { Playlist, Profile, SearchResultItem, SystemPlaylist, Track } from "$lib/types";
+  import PersonCard from "$lib/components/PersonCard.svelte";
+  import PersonListRow from "$lib/components/PersonListRow.svelte";
+  import PlaylistListRow from "$lib/components/PlaylistListRow.svelte";
+  import { viewMode } from "$lib/stores/viewMode.svelte";
 
   type AuthEvent = { ok: boolean; error: string | null };
   type View = "home" | "search" | "likes" | "playlists" | "profile";
@@ -38,12 +42,18 @@
   let authChecked = $state(false);
   let authStatus = $state("");
   let me = $state<Profile | null>(null);
+  let mainEl: HTMLElement | undefined = $state();
 
   let view = $state<View>("home");
   let searchQuery = $state("");
-  let searchTab = $state<"tracks" | "people">("tracks");
+  let searchTab = $state<"all" | "tracks" | "artists">("all");
+  let searchAllResults = $state<SearchResultItem[]>([]);
   let searchResults = $state<Track[]>([]);
   let peopleResults = $state<Profile[]>([]);
+  function isTrackResult(i: SearchResultItem): i is SearchResultItem & { kind: "track" } {
+    return i.kind === "track";
+  }
+  let allSearchTracks = $derived(searchAllResults.filter(isTrackResult));
   let likes = $state<Track[]>([]);
   let playlists = $state<Playlist[]>([]);
   let openPlaylist = $state<Playlist | null>(null);
@@ -265,6 +275,7 @@
     loggedIn = false;
     likes = [];
     playlists = [];
+    searchAllResults = [];
     searchResults = [];
     peopleResults = [];
     openPlaylist = null;
@@ -315,7 +326,9 @@
     loading = true;
     loadError = "";
     try {
-      if (searchTab === "tracks") {
+      if (searchTab === "all") {
+        searchAllResults = await api.searchAll(searchQuery);
+      } else if (searchTab === "tracks") {
         searchResults = await api.search(searchQuery);
       } else {
         peopleResults = await api.searchUsers(searchQuery);
@@ -326,10 +339,24 @@
     loading = false;
   }
 
-  function switchSearchTab(tab: "tracks" | "people") {
+  function switchSearchTab(tab: "all" | "tracks" | "artists") {
     searchTab = tab;
     if (searchQuery.trim()) runSearch();
   }
+
+  // <main> is one persistent scrollable element across every view/screen --
+  // nothing was ever resetting its scroll position on navigation. Scroll
+  // deep into a long list, then switch screens (e.g. back to Home), and
+  // you'd land at the same scrollTop, now past the end of the new (often
+  // shorter) content -- reads as a blank page / "navigation is broken"
+  // when it's really just showing empty space below everything.
+  $effect(() => {
+    view;
+    selectedTrack;
+    profileUserId;
+    openPlaylist;
+    mainEl?.scrollTo(0, 0);
+  });
 
   if (!isMiniPlayer) {
     refreshAuth();
@@ -377,7 +404,7 @@
       {refreshing}
     />
 
-    <main>
+    <main bind:this={mainEl}>
       {#if selectedTrack}
         {#key trackDetailRefreshKey}
           <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} />
@@ -385,38 +412,71 @@
       {:else if view === "home"}
         <Home {me} {likes} {playlists} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
       {:else if view === "search"}
-        <div class="search-tabs">
-          <button class:active={searchTab === "tracks"} onclick={() => switchSearchTab("tracks")}>Tracks</button>
-          <button class:active={searchTab === "people"} onclick={() => switchSearchTab("people")}>People</button>
-        </div>
-        {#if loading}
-          <p class="muted">Loading...</p>
-        {:else if loadError}
-          <p class="error-text">{loadError}</p>
-        {:else if searchTab === "tracks"}
-          {#if searchResults.length === 0}
-            <p class="muted">Search for tracks to get started.</p>
-          {:else}
-            <div class="list">
-              {#each searchResults as t, i}<TrackRow track={t} queue={searchResults} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
+        <div class="search-header">
+          <h1>{searchQuery.trim() ? `Results for "${searchQuery}"` : "Search"}</h1>
+          {#if searchTab === "artists"}
+            <div class="view-toggle" role="group" aria-label="Artist display">
+              <button class:active={viewMode.playlistView === "tiles"} onclick={() => viewMode.setPlaylistView("tiles")} aria-label="Tile view" title="Tile view">
+                <Icon name="grid" size={15} />
+              </button>
+              <button class:active={viewMode.playlistView === "rows"} onclick={() => viewMode.setPlaylistView("rows")} aria-label="Row view" title="Row view">
+                <Icon name="list" size={15} />
+              </button>
             </div>
           {/if}
-        {:else if peopleResults.length === 0}
-          <p class="muted">Search for people to get started.</p>
-        {:else}
-          <div class="people-grid">
-            {#each peopleResults as p}
-              <button class="person-card" onclick={() => openProfile(p.id)}>
-                {#if p.avatar_url}
-                  <img src={p.avatar_url} alt="" loading="lazy" />
-                {:else}
-                  <div class="person-avatar-fallback">{(p.username ?? "?")[0]?.toUpperCase()}</div>
-                {/if}
-                <span class="person-name">{p.username ?? `User #${p.id}`}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
+        </div>
+
+        <div class="search-tabs">
+          <button class:active={searchTab === "all"} onclick={() => switchSearchTab("all")}>All</button>
+          <button class:active={searchTab === "tracks"} onclick={() => switchSearchTab("tracks")}>Tracks</button>
+          <button class:active={searchTab === "artists"} onclick={() => switchSearchTab("artists")}>Artists</button>
+        </div>
+
+        <section class="module">
+          {#if loading}
+            <p class="muted">Loading...</p>
+          {:else if loadError}
+            <p class="error-text">{loadError}</p>
+          {:else if searchTab === "all"}
+            {#if searchAllResults.length === 0}
+              <p class="muted">Search to get started.</p>
+            {:else}
+              <div class="list">
+                {#each searchAllResults as item (item.kind + ":" + item.id)}
+                  {#if item.kind === "track"}
+                    <TrackRow track={item} queue={allSearchTracks} index={allSearchTracks.indexOf(item)} onOpenProfile={openProfile} onOpenTrack={openTrack} />
+                  {:else if item.kind === "user"}
+                    <PersonListRow {item} onOpen={(u) => openProfile(u.id)} />
+                  {:else}
+                    <PlaylistListRow {item} onOpen={() => viewPlaylist(item)} />
+                  {/if}
+                {/each}
+              </div>
+            {/if}
+          {:else if searchTab === "tracks"}
+            {#if searchResults.length === 0}
+              <p class="muted">Search for tracks to get started.</p>
+            {:else}
+              <div class="list">
+                {#each searchResults as t, i}<TrackRow track={t} queue={searchResults} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
+              </div>
+            {/if}
+          {:else if peopleResults.length === 0}
+            <p class="muted">Search for artists to get started.</p>
+          {:else if viewMode.playlistView === "tiles"}
+            <div class="person-grid">
+              {#each peopleResults as p (p.id)}
+                <PersonCard item={p} onOpen={(u) => openProfile(u.id)} />
+              {/each}
+            </div>
+          {:else}
+            <div class="list">
+              {#each peopleResults as p (p.id)}
+                <PersonListRow item={p} onOpen={(u) => openProfile(u.id)} />
+              {/each}
+            </div>
+          {/if}
+        </section>
       {:else if view === "likes"}
         <h1>Likes</h1>
         {#if loading}
@@ -471,7 +531,7 @@
         {/if}
       {:else if view === "profile" && profileUserId !== null}
         {#key `${profileUserId}-${profileRefreshKey}`}
-          <ProfileView userId={profileUserId} onOpenProfile={openProfile} onOpenTrack={openTrack} isOwnProfile={me?.id === profileUserId} />
+          <ProfileView userId={profileUserId} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} isOwnProfile={me?.id === profileUserId} />
         {/key}
       {/if}
     </main>
@@ -494,6 +554,8 @@
   --artwork-bg: #ddd;
   --nav-bg: #ffffff;
   --search-bg: #f2f2f2;
+  --surface: #ffffff;
+  --surface-hover: #fbfbfb;
   --player-bg: #0e0e0e;
   --player-fg: #ffffff;
   --accent: #ff5500;
@@ -518,6 +580,8 @@
     --artwork-bg: #333;
     --nav-bg: #181818;
     --search-bg: #232323;
+    --surface: #1c1c1c;
+    --surface-hover: #242424;
     --player-bg: #0a0a0a;
     --player-fg: #ffffff;
     --accent: #ff5500;
@@ -593,12 +657,21 @@
 
 .app {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
 main {
   flex: 1;
+  /* Without this, a flex item with overflow:auto doesn't actually
+     constrain to its allotted space -- its default min-height:auto lets
+     tall content grow it instead, pushing everything after it (the
+     player bar) past the window's fixed 100vh with no way to scroll back.
+     .window-body already had this fix; .app and main, deeper in the same
+     flex chain, didn't -- invisible while every view's content was short
+     enough to fit regardless, exposed once Home's content became taller. */
+  min-height: 0;
   overflow-y: auto;
   padding: 1.5rem 2rem;
   box-sizing: border-box;
@@ -660,15 +733,13 @@ h1 {
   font: inherit;
 }
 
-.playlist-grid,
-.people-grid {
+.playlist-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 1.25rem;
 }
 
-.playlist-card,
-.person-card {
+.playlist-card {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -695,22 +766,7 @@ h1 {
   color: var(--muted);
 }
 
-.person-card img,
-.person-avatar-fallback {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--artwork-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  font-size: 1.8rem;
-}
-
-.playlist-title,
-.person-name {
+.playlist-title {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -722,5 +778,61 @@ h1 {
 .playlist-count {
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.search-header h1 {
+  margin: 0;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 0.2rem;
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.2rem;
+  flex-shrink: 0;
+}
+
+.view-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.view-toggle button:hover:not(.active) {
+  color: var(--fg);
+}
+
+.view-toggle button.active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.module {
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 1.5rem 1.5rem 1.75rem;
+}
+
+.person-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 1.5rem;
 }
 </style>

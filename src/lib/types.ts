@@ -143,6 +143,16 @@ export type Selection = {
   items: { collection: (Playlist | SystemPlaylist)[] };
 };
 
+/**
+ * One item from the unified "All" search (see `api.searchAll`) -- tracks,
+ * artists, and playlists interleaved in relevance order, each tagged with
+ * `kind` by the Rust side (see `SearchResultItem` in
+ * src-tauri/src/soundcloud/models.rs) so the frontend can discriminate
+ * them, since unlike Playlist/SystemPlaylist they don't have a naturally
+ * distinguishing field (all three have plain numeric ids).
+ */
+export type SearchResultItem = ({ kind: "track" } & Track) | ({ kind: "user" } & Profile) | ({ kind: "playlist" } & Playlist);
+
 export function formatDuration(ms: number | null): string {
   if (!ms || ms <= 0) return "--:--";
   const totalSeconds = Math.floor(ms / 1000);
