@@ -402,6 +402,9 @@
       onBack={goBack}
       onRefresh={refreshCurrent}
       {refreshing}
+      onOpenTrack={openTrack}
+      onOpenProfile={openProfile}
+      onOpenPlaylist={viewPlaylist}
     />
 
     <main bind:this={mainEl}>

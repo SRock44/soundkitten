@@ -35,7 +35,9 @@
     | "refresh"
     | "pip"
     | "grid"
-    | "list";
+    | "list"
+    | "home"
+    | "playlists";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -169,5 +171,12 @@
     <line x1="8" y1="10" x2="17" y2="10" />
     <rect x="3" y="13" width="2.5" height="2.5" rx="0.6" fill="currentColor" stroke="none" />
     <line x1="8" y1="14.25" x2="17" y2="14.25" />
+  {:else if name === "home"}
+    <path d="M3.5 9.5 10 3.5l6.5 6" />
+    <path d="M5 8v7.5a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V8" />
+    <path d="M8 16.5V12h4v4.5" />
+  {:else if name === "playlists"}
+    <rect x="2.5" y="6.5" width="11" height="10" rx="1.4" />
+    <path d="M5.5 6.5V4.5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1V13a1 1 0 0 1-1 1h-1.5" />
   {/if}
 </svg>
