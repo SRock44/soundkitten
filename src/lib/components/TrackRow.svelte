@@ -66,6 +66,18 @@
     menuPos = { x: e.clientX, y: e.clientY };
   }
 
+  // WebView2 doesn't reliably deliver the `contextmenu` DOM event once its
+  // own native context menu is disabled at the settings level (confirmed
+  // live: with AreDefaultContextMenusEnabled off, oncontextmenu simply
+  // never fires here, so the app's own menu never opened either -- worse
+  // than the native menu winning, since now nothing did). `mousedown` is a
+  // plain pointer event with no such native-menu-pipeline entanglement, so
+  // it's the reliable trigger; `oncontextmenu` stays wired too as a no-cost
+  // fallback for platforms/runtimes where it does fire normally.
+  function onRowMouseDown(e: MouseEvent) {
+    if (e.button === 2) openMenu(e);
+  }
+
   let isLiked = $derived(likes.has(track.id));
   let isFollowingArtist = $derived(track.user ? following.has(track.user.id) : false);
 
@@ -127,6 +139,7 @@
   onclick={handleRowClick}
   onkeydown={(e) => e.key === "Enter" && handleRowClick()}
   oncontextmenu={openMenu}
+  onmousedown={onRowMouseDown}
 >
   {#if index !== undefined}
     <span class="index">

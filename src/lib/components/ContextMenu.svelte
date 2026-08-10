@@ -7,10 +7,17 @@
   let adjustedY = $derived(menuEl ? Math.min(y, window.innerHeight - menuEl.getBoundingClientRect().height - 8) : y);
 </script>
 
-<svelte:window onclick={onClose} oncontextmenu={onClose} onkeydown={(e) => e.key === "Escape" && onClose()} />
+<!-- oncontextmenu+onclick alone aren't reliable dismiss triggers on this WebView2 setup (see TrackRow.svelte's onRowMouseDown comment) -- onmousedown covers right-clicking elsewhere to switch menus even if oncontextmenu doesn't fire. -->
+<svelte:window onclick={onClose} oncontextmenu={onClose} onmousedown={onClose} onkeydown={(e) => e.key === "Escape" && onClose()} />
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-<div class="menu" bind:this={menuEl} style="left: {adjustedX}px; top: {adjustedY}px" onclick={(e) => e.stopPropagation()}>
+<div
+  class="menu"
+  bind:this={menuEl}
+  style="left: {adjustedX}px; top: {adjustedY}px"
+  onclick={(e) => e.stopPropagation()}
+  onmousedown={(e) => e.stopPropagation()}
+>
   {#each items as item}
     <button class:danger={item.danger} onclick={() => { item.onSelect(); onClose(); }}>{item.label}</button>
   {/each}
