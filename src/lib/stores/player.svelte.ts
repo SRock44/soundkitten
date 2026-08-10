@@ -40,6 +40,13 @@ export class PlayerStore {
   /** Transient "skipped a DRM/unplayable track" message -- distinct from `error`, which is reserved for an actually-stuck player. Cleared once the next track starts playing. */
   notice = $state<string | null>(null);
   history = $state<Track[]>([]);
+  /** Set by whoever started the current queue from a playlist/mix (see
+   * PlaylistCard.svelte), so its card can show pause instead of play and
+   * toggle in place instead of re-fetching. `play()` resets this
+   * unconditionally, since it's the single entry point every "start
+   * something fresh" call goes through (individual track clicks included)
+   * -- only the playlist-originated caller re-sets it right after. */
+  currentPlaylistKey = $state<string | null>(null);
   volume = $state(loadVolume());
   shuffle = $state(loadShuffle());
   loop = $state<LoopMode>(loadLoop());
@@ -157,6 +164,17 @@ export class PlayerStore {
     safeStorageSet(VOLUME_KEY, String(v));
   }
 
+  private preMuteVolume = 1;
+
+  toggleMute() {
+    if (this.volume > 0) {
+      this.preMuteVolume = this.volume;
+      this.setVolume(0);
+    } else {
+      this.setVolume(this.preMuteVolume > 0 ? this.preMuteVolume : 1);
+    }
+  }
+
   toggleShuffle() {
     this.shuffle = !this.shuffle;
     safeStorageSet(SHUFFLE_KEY, String(this.shuffle));
@@ -189,6 +207,7 @@ export class PlayerStore {
   play(track: Track, context: Track[] = []) {
     if (!this.audioEl) return;
     this.pendingSeek = null; // starting a fresh context invalidates any restored-but-unloaded position
+    this.currentPlaylistKey = null;
     const list = context.length ? context : [track];
     const idx = list.findIndex((t) => t.id === track.id);
     this.queue = list;

@@ -123,11 +123,12 @@
   padding: 0.45rem 0.6rem;
   background: none;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   cursor: pointer;
   text-align: left;
   color: inherit;
   font: inherit;
+  transition: background-color 0.12s ease;
 }
 
 .row:hover {
@@ -153,7 +154,7 @@
   width: 44px;
   height: 44px;
   flex-shrink: 0;
-  border-radius: 3px;
+  border-radius: 5px;
   overflow: hidden;
   background: var(--artwork-bg);
   display: flex;
@@ -182,6 +183,7 @@
   color: white;
   opacity: 0;
   font-size: 0.9rem;
+  transition: opacity 0.15s ease;
 }
 
 .row:hover .play-overlay,

@@ -2,8 +2,9 @@
 
 use super::models::{
     Comment, CommentsResponse, FeedItem, FeedResponse, FollowersResponse, FollowingIdsResponse, LikesResponse,
-    MixedSelectionsResponse, Playlist, PlaylistsResponse, Profile, RepostsResponse, SearchTracksResponse,
-    SearchUsersResponse, StreamResolution, Track, UserComment, UserCommentsResponse, UserTracksResponse,
+    MixedSelectionsResponse, Playlist, PlaylistsResponse, Profile, RepostsResponse, SearchAllResponse,
+    SearchResultItem, SearchTracksResponse, SearchUsersResponse, StreamResolution, Track, UserComment,
+    UserCommentsResponse, UserTracksResponse,
 };
 use super::{authed_delete, authed_get, authed_post, authed_put, get_full_url, resolve_raw};
 
@@ -185,6 +186,14 @@ pub async fn search_tracks(client: &reqwest::Client, query: &str, oauth_token: O
     Ok(resp.collection)
 }
 
+/// Unified search -- tracks, users, and playlists interleaved in relevance
+/// order (confirmed live via GET /search), unlike /search/tracks and
+/// /search/users above which are type-filtered. Backs the "All" search tab.
+pub async fn search_all(client: &reqwest::Client, query: &str, oauth_token: Option<&str>) -> anyhow::Result<Vec<SearchResultItem>> {
+    let resp: SearchAllResponse = authed_get(client, "/search", &[("q", query), ("limit", "30")], oauth_token).await?;
+    Ok(resp.collection)
+}
+
 pub async fn resolve_track(client: &reqwest::Client, url: &str, oauth_token: Option<&str>) -> anyhow::Result<Track> {
     resolve_raw(client, url, oauth_token).await
 }
@@ -222,7 +231,17 @@ pub async fn get_playlists(client: &reqwest::Client, oauth_token: &str) -> anyho
     let user_id = current_user_id(client, oauth_token).await?;
     let path = format!("/users/{user_id}/playlists/liked_and_owned");
     let resp: PlaylistsResponse = authed_get(client, &path, &[("limit", "50")], Some(oauth_token)).await?;
-    Ok(resp.collection.into_iter().map(|p| p.into_playlist()).collect())
+    // "liked_and_owned" is a union of two categories -- a playlist the user
+    // owns AND has liked (e.g. liked their own playlist, confirmed live)
+    // comes back once per category, i.e. duplicated. A duplicate id here
+    // used to crash the frontend's keyed list rendering entirely.
+    let mut seen = std::collections::HashSet::new();
+    Ok(resp
+        .collection
+        .into_iter()
+        .map(|p| p.into_playlist())
+        .filter(|p| seen.insert(p.id))
+        .collect())
 }
 
 /// Resolves a specific transcoding's descriptor URL into a final,

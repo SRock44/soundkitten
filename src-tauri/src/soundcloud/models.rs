@@ -138,6 +138,14 @@ pub struct Track {
     pub comment_count: Option<i64>,
     pub playback_count: Option<i64>,
     pub created_at: Option<String>,
+    /// Points to a small public, CORS-open JSON file on wave.sndcdn.com
+    /// ({width, height, samples: [...]}) -- SoundCloud's own precomputed
+    /// per-track amplitude envelope, the same data their own player draws
+    /// as the orange waveform. Confirmed live (real API response): no
+    /// client_id or auth needed to fetch it, so the frontend fetches it
+    /// directly (see PlayerBar.svelte's loadWaveform) rather than needing
+    /// a Rust-side proxy.
+    pub waveform_url: Option<String>,
 }
 
 impl Track {
@@ -339,6 +347,51 @@ where
 pub struct SearchTracksResponse {
     #[serde(default)]
     pub collection: Vec<Track>,
+}
+
+/// An item from the unified GET /search endpoint (as opposed to the
+/// type-specific /search/tracks and /search/users this app already used) --
+/// confirmed live: it returns tracks, users, and playlists interleaved in
+/// relevance order, each carrying a "kind" field. Field shapes per kind are
+/// identical to what Track/Profile/Playlist already model (same API
+/// family, different route), so no new struct fields needed, just this
+/// kind-tagged wrapper -- dispatch on decode mirrors SelectionEntry above,
+/// but unlike Playlist/SystemPlaylist (distinguishable by id type alone,
+/// string vs number), Track/Profile/Playlist all have plain numeric ids
+/// with no structurally distinguishing field -- so, unlike SelectionEntry,
+/// this MUST serialize with an explicit "kind" tag or the frontend has no
+/// way to tell the variants apart at runtime.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SearchResultItem {
+    Track(Track),
+    User(Profile),
+    Playlist(Playlist),
+}
+
+impl SearchResultItem {
+    fn from_value(v: serde_json::Value) -> Option<Self> {
+        match v.get("kind").and_then(|k| k.as_str())? {
+            "track" => serde_json::from_value::<Track>(v).ok().map(SearchResultItem::Track),
+            "user" => serde_json::from_value::<Profile>(v).ok().map(SearchResultItem::User),
+            "playlist" => serde_json::from_value::<Playlist>(v).ok().map(SearchResultItem::Playlist),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SearchAllResponse {
+    #[serde(default, deserialize_with = "deserialize_search_items_lenient")]
+    pub collection: Vec<SearchResultItem>,
+}
+
+fn deserialize_search_items_lenient<'de, D>(deserializer: D) -> Result<Vec<SearchResultItem>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Vec<serde_json::Value> = Vec::deserialize(deserializer)?;
+    Ok(raw.into_iter().filter_map(SearchResultItem::from_value).collect())
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

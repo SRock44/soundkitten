@@ -1,8 +1,10 @@
 <script lang="ts">
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
-  import { isSystemPlaylist, selectionArtwork, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
+  import { viewMode } from "../stores/viewMode.svelte";
+  import { isSystemPlaylist, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
+  import PlaylistShelf from "./PlaylistShelf.svelte";
   import Icon from "./Icon.svelte";
   import { delay, syncWithCache } from "../localCache";
   import { syncStatus } from "../stores/syncStatus.svelte";
@@ -30,6 +32,22 @@
   function openSelectionItem(p: Playlist | SystemPlaylist) {
     if (isSystemPlaylist(p)) onOpenSystemPlaylist(p);
     else onOpenPlaylist(p);
+  }
+
+  // The Playlists section only ever holds the user's own real playlists,
+  // never system playlists -- narrowed here so it can share PlaylistShelf
+  // (which takes the wider Playlist | SystemPlaylist type, since
+  // Selections below need it).
+  function openOwnPlaylist(p: Playlist | SystemPlaylist) {
+    if (!isSystemPlaylist(p)) onOpenPlaylist(p);
+  }
+
+  function greeting(): string {
+    const hour = new Date().getHours();
+    if (hour < 5) return "Good night";
+    if (hour < 12) return "Good morning";
+    if (hour < 18) return "Good afternoon";
+    return "Good evening";
   }
 
   let feed = $state<Track[]>([]);
@@ -68,9 +86,22 @@
 </script>
 
 <div class="home">
-  <h1>{me?.username ? `Welcome back, ${me.username}` : "Welcome back"}</h1>
+  <div class="hero">
+    <div>
+      <p class="hero-eyebrow">{greeting()}</p>
+      <h1>{me?.username ?? "Welcome back"}</h1>
+    </div>
+    <div class="view-toggle" role="group" aria-label="Playlist display">
+      <button class:active={viewMode.playlistView === "tiles"} onclick={() => viewMode.setPlaylistView("tiles")} aria-label="Tile view" title="Tile view">
+        <Icon name="grid" size={15} />
+      </button>
+      <button class:active={viewMode.playlistView === "rows"} onclick={() => viewMode.setPlaylistView("rows")} aria-label="Row view" title="Row view">
+        <Icon name="list" size={15} />
+      </button>
+    </div>
+  </div>
 
-  <section>
+  <section class="module">
     <h2>Feed</h2>
     {#if feedLoading}
       <p class="muted">Loading feed...</p>
@@ -91,7 +122,7 @@
   </section>
 
   {#if player.history.length > 0}
-    <section>
+    <section class="module">
       <h2>Recently played</h2>
       <div class="list">
         {#each player.history as t, i}<TrackRow track={t} queue={player.history} index={i} {onOpenProfile} {onOpenTrack} />{/each}
@@ -99,7 +130,7 @@
     </section>
   {/if}
 
-  <section>
+  <section class="module">
     <div class="section-header">
       <h2>Likes</h2>
       <button class="see-all" onclick={() => onNavigate("likes")}>See all →</button>
@@ -113,45 +144,23 @@
     {/if}
   </section>
 
-  <section>
+  <section class="module featured">
     <div class="section-header">
-      <h2>Playlists</h2>
+      <h2>Your playlists</h2>
       <button class="see-all" onclick={() => onNavigate("playlists")}>See all →</button>
     </div>
     {#if playlists.length === 0}
       <p class="muted">No playlists yet.</p>
     {:else}
-      <div class="playlist-row">
-        {#each playlists.slice(0, 6) as p}
-          <button class="playlist-card" onclick={() => onOpenPlaylist(p)}>
-            {#if p.artwork_url}
-              <img src={p.artwork_url} alt="" loading="lazy" />
-            {:else}
-              <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
-            {/if}
-            <span class="playlist-title">{p.title ?? "Untitled"}</span>
-          </button>
-        {/each}
-      </div>
+      <PlaylistShelf items={playlists.slice(0, 10)} onOpen={openOwnPlaylist} />
     {/if}
   </section>
 
   {#if !selectionsLoading && selections.length > 0}
-    {#each selections as sel}
-      <section>
+    {#each selections as sel (sel.urn ?? sel.title)}
+      <section class="module">
         <h2>{sel.title ?? "Discover"}</h2>
-        <div class="playlist-row">
-          {#each sel.items.collection as p}
-            <button class="playlist-card" onclick={() => openSelectionItem(p)}>
-              {#if selectionArtwork(p)}
-                <img src={selectionArtwork(p)} alt="" loading="lazy" />
-              {:else}
-                <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
-              {/if}
-              <span class="playlist-title">{p.title ?? "Untitled"}</span>
-            </button>
-          {/each}
-        </div>
+        <PlaylistShelf items={sel.items.collection} onOpen={openSelectionItem} />
       </section>
     {/each}
   {/if}
@@ -161,23 +170,93 @@
 .home {
   display: flex;
   flex-direction: column;
-  gap: 2rem;
+  gap: 1.5rem;
 }
 
-h1 {
+.hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 2rem 1.75rem;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(255, 85, 0, 0.16), var(--surface) 65%);
+}
+
+.hero-eyebrow {
+  margin: 0 0 0.3rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.hero h1 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.module {
+  background: var(--surface);
+  border-radius: 18px;
+  padding: 1.5rem 1.5rem 1.75rem;
+}
+
+.module.featured {
+  background: linear-gradient(160deg, rgba(255, 85, 0, 0.09), var(--surface) 55%);
 }
 
 h2 {
-  margin: 0 0 0.75rem;
-  font-size: 1.05rem;
+  margin: 0 0 1rem;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+.view-toggle {
+  display: flex;
+  gap: 0.2rem;
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.2rem;
+  flex-shrink: 0;
+}
+
+.view-toggle button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.view-toggle button:hover:not(.active) {
+  color: var(--fg);
+}
+
+.view-toggle button.active {
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }
 
 .section-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  margin-bottom: 0.25rem;
+}
+
+.section-header h2 {
+  margin-bottom: 0;
 }
 
 .see-all {
@@ -185,6 +264,7 @@ h2 {
   border: none;
   color: var(--muted);
   font-size: 0.85rem;
+  font-weight: 600;
   cursor: pointer;
 }
 
@@ -205,48 +285,5 @@ h2 {
 
 .muted {
   color: var(--muted);
-}
-
-.playlist-row {
-  display: flex;
-  gap: 1.1rem;
-  overflow-x: auto;
-  padding-bottom: 0.25rem;
-}
-
-.playlist-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-  flex: 0 0 140px;
-  width: 140px;
-  background: none;
-  border: none;
-  padding: 0;
-  text-align: left;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.playlist-card img,
-.playlist-artwork-fallback {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 6px;
-  object-fit: cover;
-  background: var(--artwork-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-}
-
-.playlist-title {
-  font-weight: 600;
-  font-size: 0.88rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 </style>

@@ -5,15 +5,63 @@ pub mod soundcloud;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 const MAIN_WINDOW_LABEL: &str = "main";
+const MINI_PLAYER_WINDOW_LABEL: &str = "mini-player";
 
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+/// Opens the mini player, a second window pointed at the same app entry
+/// (this app has no SvelteKit sub-routes, everything is one page with
+/// internal view state by design -- +page.svelte checks its own window
+/// label at startup to decide which UI to render, see src/routes/+page.svelte).
+/// Idempotent: focuses the existing window instead of creating a duplicate
+/// -- the window is only ever hidden, never destroyed (see the
+/// CloseRequested handler below), so after the very first open this
+/// always just shows the same already-synced window. Hides the main
+/// window either way, they're meant to be alternate views, not both open
+/// at once.
+///
+/// Must be `async fn`: a plain sync command runs on the main/event-loop
+/// thread, and WebviewWindowBuilder::build() on Windows has to dispatch
+/// window creation back onto that same main thread and block waiting for
+/// it -- called from the main thread itself, that wait never resolves,
+/// which deadlocks the whole app (observed live: the new window painted
+/// nothing and the main window stopped responding entirely). `async fn`
+/// commands run off the main thread, avoiding that -- same pattern
+/// already used by auth::start_login/official_oauth::start_official_login
+/// for their own window creation.
+#[tauri::command]
+async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(MINI_PLAYER_WINDOW_LABEL) {
+        let _ = win.show();
+        let _ = win.set_focus();
+    } else {
+        // Deliberately NOT always_on_top -- that pinned it above every
+        // other application's windows, not just SoundKitten's own, which
+        // is not what "small floating widget" should mean. Resizable so
+        // users who want a bigger widget can drag it larger -- the
+        // frontend layout (MiniPlayer.svelte) is flex-based specifically
+        // so it reflows sanely rather than just clipping.
+        WebviewWindowBuilder::new(&app, MINI_PLAYER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
+            .title("SoundKitten")
+            .inner_size(320.0, 148.0)
+            .min_inner_size(260.0, 120.0)
+            .resizable(true)
+            .decorations(false)
+            .build()
+            .map_err(|e| e.to_string())?;
+    }
+    if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = main.hide();
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -31,8 +79,9 @@ pub fn run() {
             // keeps running in the hidden window, and this is how the user
             // gets back to it or actually exits.
             let show_item = MenuItem::with_id(app, "show", "Show SoundKitten", true, None::<&str>)?;
+            let mini_player_item = MenuItem::with_id(app, "mini_player", "Mini Player", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show_item, &mini_player_item, &quit_item])?;
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().cloned().expect("app has a default window icon"))
@@ -41,6 +90,12 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main_window(app),
+                    "mini_player" => {
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let _ = open_mini_player(app).await;
+                        });
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -62,10 +117,28 @@ pub fn run() {
                     // exits.
                     api.prevent_close();
                     let _ = window.hide();
+                } else if window.label() == MINI_PLAYER_WINDOW_LABEL {
+                    // Hide, not destroy -- same reasoning as the main
+                    // window above, plus one more: destroying it meant
+                    // every reopen was a full fresh webview load (blank
+                    // "Nothing playing" until the first state sync
+                    // round-trip landed, visible as the mini player
+                    // "restarting" on every switch back from the main
+                    // window). Hidden, its JS keeps running and stays
+                    // synced the whole time (see PlayerBar.svelte's
+                    // emitters), so reopening is instant and already
+                    // correct -- open_mini_player's existing
+                    // show()+set_focus() branch for "window already
+                    // exists" now covers every reopen, not just a
+                    // same-session double-click.
+                    api.prevent_close();
+                    let _ = window.hide();
+                    show_main_window(&window.app_handle().clone());
                 }
             }
         })
         .invoke_handler(tauri::generate_handler![
+            open_mini_player,
             auth::is_logged_in,
             auth::logout,
             auth::start_login,
@@ -81,6 +154,7 @@ pub fn run() {
             soundcloud::commands::sc_user_profile,
             soundcloud::commands::sc_user_tracks,
             soundcloud::commands::sc_search_users,
+            soundcloud::commands::sc_search_all,
             soundcloud::commands::sc_feed,
             soundcloud::commands::sc_like_track,
             soundcloud::commands::sc_unlike_track,

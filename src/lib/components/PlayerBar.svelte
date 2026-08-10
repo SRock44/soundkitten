@@ -2,12 +2,15 @@
   import { player } from "../stores/player.svelte";
   import { api } from "../api";
   import { likes } from "../stores/likes.svelte";
+  import { following } from "../stores/following.svelte";
   import { officialAuth } from "../stores/officialAuth.svelte";
   import { formatDuration } from "../types";
-  import type { Track } from "../types";
+  import type { MiniPlayerCommand, MiniPlayerState, Track } from "../types";
   import Icon from "./Icon.svelte";
   import FollowButton from "./FollowButton.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
+  import { emit, listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
 
   let {
     onOpenTrack,
@@ -29,8 +32,37 @@
   let showQueue = $state(false);
   let dragIndex = $state<number | null>(null);
   let likeBusy = $state(false);
-  let progressPct = $derived(duration > 0 ? (currentTime / duration) * 100 : 0);
+  let followBusy = $state(false);
+  // `ontimeupdate` only fires a few times a second (browsers throttle it,
+  // not a per-frame event), and the scrubber fill had no CSS transition --
+  // every tick just teleported the width straight to the new value, which
+  // reads as choppy/"splotchy" next to anything actually smooth. Same fix
+  // as the mini player's waveform reveal: snap instantly to the true
+  // position (no transition) whenever it changes, then hand a single
+  // transition all the way to the track's end off to the compositor --
+  // cheap (no per-frame JS at all) and re-syncs automatically on every
+  // ontimeupdate tick, so drift never has room to accumulate.
+  let scrubberFillPct = $state(0);
+  let scrubberTransitionSec = $state(0);
+
+  $effect(() => {
+    if (duration <= 0) {
+      scrubberTransitionSec = 0;
+      scrubberFillPct = 0;
+      return;
+    }
+    scrubberTransitionSec = 0;
+    scrubberFillPct = Math.min(100, (currentTime / duration) * 100);
+    if (!isPlaying) return;
+    const remainingSeconds = Math.max(0, duration - currentTime);
+    const raf = requestAnimationFrame(() => {
+      scrubberTransitionSec = remainingSeconds;
+      scrubberFillPct = 100;
+    });
+    return () => cancelAnimationFrame(raf);
+  });
   let isLiked = $derived(player.current ? likes.has(player.current.id) : false);
+  let isFollowing = $derived(player.current?.user ? following.has(player.current.user.id) : false);
 
   // Unofficial-API like writes are DataDome-blocked (confirmed live), but
   // official OAuth's /likes/tracks/{id} works cleanly -- see
@@ -63,6 +95,134 @@
     onOpenedOnSoundCloud?.();
   }
 
+  /** Mirrors toggleLike() above, for the mini player's "toggleFollow" command -- see the emitter/listener effects below. */
+  async function toggleFollowForCurrent() {
+    const track = player.current;
+    if (!track?.user || followBusy) return;
+    followBusy = true;
+    const next = !following.has(track.user.id);
+    try {
+      const connected = await officialAuth.ensureConnected();
+      if (!connected) {
+        openOnSoundCloud();
+        return;
+      }
+      if (next) await api.followUserV2(track.user.id);
+      else await api.unfollowUserV2(track.user.id);
+      following.set(track.user.id, next);
+    } catch (e) {
+      player.error = `Failed to ${next ? "follow" : "unfollow"}: ${e}`;
+    } finally {
+      followBusy = false;
+    }
+  }
+
+  function miniPlayerState(): MiniPlayerState {
+    return {
+      track: player.current,
+      isPlaying,
+      position: currentTime,
+      duration,
+      shuffle: player.shuffle,
+      loop: player.loop,
+      isLiked,
+      isFollowing,
+      volume: player.volume,
+      waveform: waveformSamples,
+      upcoming: player.upcoming.slice(0, 8),
+    };
+  }
+
+  function seekTo(target: number) {
+    if (!duration) return;
+    if (player.pendingSeek !== null && !audioEl.src) {
+      player.loadPendingRestore(target);
+      return;
+    }
+    audioEl.currentTime = target;
+    // audioEl.currentTime updates synchronously the instant it's assigned,
+    // but the 'timeupdate' event that normally syncs liveCurrentTime to it
+    // fires asynchronously -- without this, anything that reads the
+    // derived `currentTime` right after a seek (e.g. the immediate
+    // mini-player emits below) would still see the pre-seek position, and
+    // if playback is paused there's no timeupdate coming at all until play
+    // resumes, so the stale value would stick indefinitely.
+    liveCurrentTime = target;
+  }
+
+  function dispatchMiniCommand(command: MiniPlayerCommand) {
+    switch (command.action) {
+      case "toggle": player.toggle(); break;
+      case "next": player.next(); break;
+      case "previous": player.previous(); break;
+      case "shuffle": player.toggleShuffle(); break;
+      case "cycleLoop": player.cycleLoop(); break;
+      case "toggleLike": toggleLike(); break;
+      case "toggleFollow": toggleFollowForCurrent(); break;
+      case "seek":
+        seekTo(command.position);
+        emit("player:state", miniPlayerState());
+        break;
+      case "toggleMute": player.toggleMute(); break;
+      case "setVolume": player.setVolume(command.value); break;
+    }
+  }
+
+  // The mini player's progress bar shows SoundCloud's own per-track
+  // waveform (the same amplitude-envelope data their web player draws),
+  // not a live spectrum analyser -- confirmed live that Track.waveform_url
+  // (wave.sndcdn.com/{id}_m.json, {width, height, samples: number[]}) is
+  // public and CORS-open (Access-Control-Allow-Origin: *), so this fetches
+  // it directly rather than needing a Rust-side proxy. Static per track,
+  // so it only needs to be (re)loaded on track change, not polled.
+  const MINI_WAVE_BARS = 28;
+  let waveformSamples = $state<number[]>([]);
+  let waveformTrackId: number | null = null;
+
+  async function loadWaveform(track: Track | null) {
+    if (!track?.waveform_url) {
+      waveformSamples = [];
+      waveformTrackId = track?.id ?? null;
+      return;
+    }
+    const trackId = track.id;
+    waveformTrackId = trackId;
+    try {
+      const resp = await fetch(track.waveform_url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data: { height?: number; samples?: number[] } = await resp.json();
+      const samples = data.samples ?? [];
+      if (waveformTrackId !== trackId || samples.length === 0) return; // track changed again mid-fetch
+      const peak = data.height ?? Math.max(1, ...samples);
+      waveformSamples = resampleWaveform(samples, peak, MINI_WAVE_BARS);
+      emit("player:state", miniPlayerState());
+    } catch {
+      if (waveformTrackId === trackId) waveformSamples = [];
+    }
+  }
+
+  /** Averages `samples` down into `buckets` values normalized to 0..1. */
+  function resampleWaveform(samples: number[], peak: number, buckets: number): number[] {
+    const out: number[] = [];
+    const bucketSize = samples.length / buckets;
+    for (let i = 0; i < buckets; i++) {
+      const start = Math.floor(i * bucketSize);
+      const end = Math.max(start + 1, Math.floor((i + 1) * bucketSize));
+      let sum = 0;
+      let count = 0;
+      for (let j = start; j < end && j < samples.length; j++) {
+        sum += samples[j];
+        count++;
+      }
+      out.push(count > 0 ? Math.min(1, sum / count / peak) : 0);
+    }
+    return out;
+  }
+
+  $effect(() => {
+    loadWaveform(player.current);
+  });
+
   $effect(() => {
     player.attach(audioEl);
     player.restore();
@@ -88,17 +248,63 @@
     return () => document.removeEventListener("visibilitychange", resync);
   });
 
+  // Structural changes (track switch, play/pause, shuffle, loop, like,
+  // follow, queue contents) push a fresh snapshot to the mini player right
+  // away. Position/duration piggyback on whatever the most recent snapshot
+  // was rather than triggering their own emit on every timeupdate tick --
+  // the interval effect below covers live scrubber movement instead, so the
+  // mini player isn't getting a full cross-window event 4x/second.
+  $effect(() => {
+    player.current;
+    isPlaying;
+    player.shuffle;
+    player.loop;
+    isLiked;
+    isFollowing;
+    player.upcoming.length;
+    emit("player:state", miniPlayerState());
+  });
+
+  $effect(() => {
+    const id = setInterval(() => {
+      if (isPlaying) emit("player:state", miniPlayerState());
+    }, 1000);
+    return () => clearInterval(id);
+  });
+
+  $effect(() => {
+    let unlistenRequest: (() => void) | undefined;
+    let unlistenCommand: (() => void) | undefined;
+    let unlistenShowMain: (() => void) | undefined;
+    listen("miniplayer:request-state", () => emit("player:state", miniPlayerState())).then((f) => (unlistenRequest = f));
+    listen<MiniPlayerCommand>("player:command", (e) => dispatchMiniCommand(e.payload)).then((f) => (unlistenCommand = f));
+    listen<{ trackId: number | null }>("miniplayer:show-main", (e) => {
+      // The mini player only hides itself (see MiniPlayer.svelte's
+      // backToApp) -- it has no direct way to show/focus a DIFFERENT
+      // window, so the main window brings itself forward in response to
+      // this instead. This used to piggyback on the mini player's
+      // CloseRequested handler in src-tauri/src/lib.rs, but that stopped
+      // firing once the mini player switched from close() to hide().
+      const win = getCurrentWindow();
+      win.show();
+      win.setFocus();
+      const track = e.payload.trackId !== null ? player.queue.find((t) => t.id === e.payload.trackId) : null;
+      if (track) onOpenTrack(track);
+    }).then((f) => (unlistenShowMain = f));
+    return () => {
+      unlistenRequest?.();
+      unlistenCommand?.();
+      unlistenShowMain?.();
+    };
+  });
+
   function seek(e: MouseEvent) {
     if (!duration) return;
     const bar = e.currentTarget as HTMLElement;
     const rect = bar.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
-    const target = pct * duration;
-    if (player.pendingSeek !== null && !audioEl.src) {
-      player.loadPendingRestore(target);
-      return;
-    }
-    audioEl.currentTime = target;
+    seekTo(pct * duration);
+    emit("player:state", miniPlayerState());
   }
 
   function onVolumeInput(e: Event) {
@@ -150,7 +356,7 @@
   ></audio>
 
   <button class="scrubber" onclick={seek} aria-label="Seek" disabled={!player.current}>
-    <span class="scrubber-fill" style="width: {progressPct}%"></span>
+    <span class="scrubber-fill" style="width: {scrubberFillPct}%; transition: width {scrubberTransitionSec}s linear;"></span>
   </button>
 
   {#if showQueue}
@@ -261,8 +467,11 @@
         <span>{formatDuration(duration * 1000)}</span>
       </div>
       <button class="queue-toggle" class:active={showQueue} onclick={() => (showQueue = !showQueue)} aria-label="Toggle queue"><Icon name="queue" size={15} /></button>
+      <button class="queue-toggle" onclick={() => api.openMiniPlayer()} aria-label="Mini player" title="Mini player"><Icon name="pip" size={15} /></button>
       <div class="volume">
-        <span class="vol-icon"><Icon name={player.volume === 0 ? "volume-mute" : "volume"} size={15} /></span>
+        <button class="vol-icon" onclick={() => player.toggleMute()} aria-label={player.volume === 0 ? "Unmute" : "Mute"} title={player.volume === 0 ? "Unmute" : "Mute"}>
+          <Icon name={player.volume === 0 ? "volume-mute" : "volume"} size={15} />
+        </button>
         <input type="range" min="0" max="1" step="0.01" value={player.volume} oninput={onVolumeInput} aria-label="Volume" />
       </div>
     </div>
@@ -539,6 +748,17 @@
 .vol-icon {
   display: flex;
   align-items: center;
+  background: none;
+  border: none;
+  padding: 0.2rem;
+  border-radius: 4px;
+  color: #a0a0a0;
+  cursor: pointer;
+}
+
+.vol-icon:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .volume input[type="range"] {

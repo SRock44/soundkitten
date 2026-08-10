@@ -3,7 +3,7 @@
 //! so a raw, time-limited CDN URL never has to round-trip through the frontend.
 
 use super::api;
-use super::models::{Comment, Playlist, Profile, Selection, Track, UserComment};
+use super::models::{Comment, Playlist, Profile, Selection, SearchResultItem, Track, UserComment};
 use crate::auth::get_stored_token;
 
 fn require_token() -> Result<String, String> {
@@ -80,6 +80,14 @@ pub async fn sc_user_tracks(user_id: i64) -> Result<Vec<Track>, String> {
 pub async fn sc_search_users(query: String) -> Result<Vec<Profile>, String> {
     let client = http_client();
     api::search_users(&client, &query, get_stored_token().as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sc_search_all(query: String) -> Result<Vec<SearchResultItem>, String> {
+    let client = http_client();
+    api::search_all(&client, &query, get_stored_token().as_deref())
         .await
         .map_err(|e| e.to_string())
 }

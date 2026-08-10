@@ -3,20 +3,24 @@
   import { bannerUrl, handleOf, timeAgo } from "../types";
   import type { Playlist, Profile, Track, UserComment } from "../types";
   import TrackRow from "./TrackRow.svelte";
-  import Icon from "./Icon.svelte";
+  import PlaylistCard from "./PlaylistCard.svelte";
+  import PlaylistListRow from "./PlaylistListRow.svelte";
   import UserListModal from "./UserListModal.svelte";
   import ShareButton from "./ShareButton.svelte";
   import FollowButton from "./FollowButton.svelte";
+  import { viewMode } from "../stores/viewMode.svelte";
 
   let {
     userId,
     onOpenProfile,
     onOpenTrack,
+    onOpenPlaylist,
     isOwnProfile = false,
   }: {
     userId: number;
     onOpenProfile: (id: number) => void;
     onOpenTrack: (t: Track) => void;
+    onOpenPlaylist: (p: Playlist) => void;
     isOwnProfile?: boolean;
   } = $props();
 
@@ -39,6 +43,14 @@
   // Chronological, newest-first, merged tracks+reposts -- mirrors the
   // website's default profile view. Dedupes by id (a track can appear in
   // both lists if the owner reposted their own track).
+  // Also guards the keyed #each below against SoundCloud returning the same
+  // playlist twice (confirmed live elsewhere in the app -- see
+  // PlaylistShelf.svelte -- a keyed #each throws on duplicate keys).
+  let uniquePlaylists = $derived.by(() => {
+    const seen = new Set<number>();
+    return playlists.filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
+  });
+
   let all = $derived.by(() => {
     const seen = new Set<number>();
     return [...tracks, ...reposts]
@@ -160,20 +172,18 @@
           </div>
         {/if}
       {:else if tab === "playlists"}
-        {#if playlists.length === 0}
+        {#if uniquePlaylists.length === 0}
           <p class="muted">No public playlists.</p>
-        {:else}
+        {:else if viewMode.playlistView === "tiles"}
           <div class="playlist-grid">
-            {#each playlists as p}
-              <div class="playlist-card">
-                {#if p.artwork_url}
-                  <img src={p.artwork_url} alt="" loading="lazy" />
-                {:else}
-                  <div class="playlist-artwork-fallback"><Icon name="queue" size={20} /></div>
-                {/if}
-                <span class="playlist-title">{p.title ?? "Untitled"}</span>
-                <span class="playlist-count">{p.track_count ?? p.tracks.length} tracks</span>
-              </div>
+            {#each uniquePlaylists as p (p.id)}
+              <PlaylistCard item={p} onOpen={() => onOpenPlaylist(p)} />
+            {/each}
+          </div>
+        {:else}
+          <div class="list">
+            {#each uniquePlaylists as p (p.id)}
+              <PlaylistListRow item={p} onOpen={() => onOpenPlaylist(p)} />
             {/each}
           </div>
         {/if}
@@ -412,39 +422,7 @@
 .playlist-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 1.25rem;
-}
-
-.playlist-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.playlist-card img,
-.playlist-artwork-fallback {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 6px;
-  object-fit: cover;
-  background: var(--artwork-bg);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-}
-
-.playlist-title {
-  font-weight: 600;
-  font-size: 0.88rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.playlist-count {
-  font-size: 0.78rem;
-  color: var(--muted);
+  gap: 1.5rem;
 }
 
 .sidebar {

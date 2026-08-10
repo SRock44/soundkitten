@@ -186,6 +186,43 @@
   padding: 0 1.25rem;
 }
 
+/* The main window's real floor is minWidth:760 (tauri.conf.json) -- with
+   no responsive handling at all, the search column's 280px minimum ate
+   into the left nav's space, and "Playlists" (the last/least space)
+   could get squeezed off entirely with no visible sign anything was
+   wrong. Two breakpoints progressively reclaim space: first the search
+   box's floor shrinks, then (only at the narrowest supported width) the
+   "SoundKitten" wordmark drops to icon-only, since keeping Home/Likes/
+   Playlists visible and clickable matters more than the full logo. */
+@media (max-width: 1000px) {
+  .topnav {
+    grid-template-columns: 1fr minmax(180px, 340px) 1fr;
+  }
+
+  .left {
+    gap: 1rem;
+  }
+
+  .links button {
+    padding: 0.4rem 0.55rem;
+  }
+}
+
+@media (max-width: 820px) {
+  .topnav {
+    grid-template-columns: 1fr minmax(120px, 240px) 1fr;
+    padding: 0 0.75rem;
+  }
+
+  .left {
+    gap: 0.6rem;
+  }
+
+  .logo-text {
+    display: none;
+  }
+}
+
 .left {
   display: flex;
   align-items: center;

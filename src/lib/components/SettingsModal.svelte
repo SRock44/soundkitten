@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "../api";
+  import { settings } from "../stores/settings.svelte";
   import Icon from "./Icon.svelte";
 
   let { onClose }: { onClose: () => void } = $props();
@@ -59,6 +60,28 @@
       <button class="close" onclick={onClose} aria-label="Close"><Icon name="close" size={13} /></button>
     </div>
     <div class="body">
+      <div class="setting-row">
+        <div class="setting-text">
+          <h3>Performance mode</h3>
+          <p class="hint">
+            Turns off the mini player's dancing-cat video and sound-wave animation for a lighter-weight experience.
+            Off by default.
+          </p>
+        </div>
+        <button
+          class="switch"
+          class:on={settings.performanceMode}
+          role="switch"
+          aria-checked={settings.performanceMode}
+          aria-label="Enable performance mode"
+          onclick={() => settings.setPerformanceMode(!settings.performanceMode)}
+        >
+          <span class="switch-knob"></span>
+        </button>
+      </div>
+
+      <hr />
+
       <h3>Manual client ID override</h3>
       <p class="hint">
         SoundKitten normally reads a client ID automatically from soundcloud.com. If soundcloud.com is
@@ -145,7 +168,7 @@ h3 {
   font-size: 0.75rem;
 }
 
-input {
+input[type="text"] {
   width: 100%;
   box-sizing: border-box;
   padding: 0.5rem 0.6rem;
@@ -197,5 +220,57 @@ input {
   margin: 0;
   font-size: 0.8rem;
   color: var(--accent);
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.setting-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.switch {
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--border);
+  cursor: pointer;
+  position: relative;
+  transition: background 0.15s ease;
+}
+
+.switch.on {
+  background: var(--accent);
+}
+
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+
+.switch.on .switch-knob {
+  transform: translateX(14px);
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0.4rem 0;
 }
 </style>

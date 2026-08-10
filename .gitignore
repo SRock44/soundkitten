@@ -14,3 +14,6 @@ vite.config.ts.timestamp-*
 
 # closed-source, not part of the open-source app
 /website
+
+# Claude Code scratch/session output, not part of the app
+/.claude/

@@ -31,6 +31,7 @@ export type Track = {
   playback_count: number | null;
   created_at: string | null;
   media: { transcodings: { format: { protocol: string | null; mime_type: string | null } | null }[] };
+  waveform_url: string | null;
 };
 
 /**
@@ -142,6 +143,16 @@ export type Selection = {
   items: { collection: (Playlist | SystemPlaylist)[] };
 };
 
+/**
+ * One item from the unified "All" search (see `api.searchAll`) -- tracks,
+ * artists, and playlists interleaved in relevance order, each tagged with
+ * `kind` by the Rust side (see `SearchResultItem` in
+ * src-tauri/src/soundcloud/models.rs) so the frontend can discriminate
+ * them, since unlike Playlist/SystemPlaylist they don't have a naturally
+ * distinguishing field (all three have plain numeric ids).
+ */
+export type SearchResultItem = ({ kind: "track" } & Track) | ({ kind: "user" } & Profile) | ({ kind: "playlist" } & Playlist);
+
 export function formatDuration(ms: number | null): string {
   if (!ms || ms <= 0) return "--:--";
   const totalSeconds = Math.floor(ms / 1000);
@@ -149,3 +160,49 @@ export function formatDuration(ms: number | null): string {
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
+
+/**
+ * The mini player window has no audio element and no seeded likes/following
+ * stores of its own -- it's a thin remote control. The main window pushes
+ * this snapshot over a Tauri event (see PlayerBar.svelte's emitter effect)
+ * whenever anything relevant changes, and again on demand when the mini
+ * player first mounts (see "miniplayer:request-state"). `loop` duplicates
+ * player.svelte.ts's LoopMode union rather than importing it, to avoid a
+ * circular import (player.svelte.ts already imports Track from this file).
+ */
+export type MiniPlayerState = {
+  track: Track | null;
+  isPlaying: boolean;
+  position: number;
+  duration: number;
+  shuffle: boolean;
+  loop: "off" | "all" | "one";
+  isLiked: boolean;
+  isFollowing: boolean;
+  volume: number;
+  /** SoundCloud's real per-track amplitude envelope (see Track.waveform_url), resampled to a fixed bar count -- static per track, not a live analyser. */
+  waveform: number[];
+  upcoming: Track[];
+};
+
+/**
+ * Sent from the mini player to the main window. Playback transport goes
+ * through here because the real <audio> element only exists in the main
+ * window; like/follow use "toggle" verbs (not separate like/unlike) so the
+ * two windows never need to agree on whose idea of the current state is
+ * newer.
+ */
+export type MiniPlayerCommand =
+  | { action: "toggle" }
+  | { action: "next" }
+  | { action: "previous" }
+  | { action: "shuffle" }
+  | { action: "cycleLoop" }
+  | { action: "toggleLike" }
+  | { action: "toggleFollow" }
+  | { action: "seek"; position: number }
+  | { action: "toggleMute" }
+  | { action: "setVolume"; value: number };
+
+/** Sent from the mini player when the user wants back into the full app -- optionally with a track to open directly. */
+export type MiniPlayerShowMain = { trackId: number | null };

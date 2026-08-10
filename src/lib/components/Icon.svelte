@@ -32,7 +32,10 @@
     | "user"
     | "user-filled"
     | "cloud"
-    | "refresh";
+    | "refresh"
+    | "pip"
+    | "grid"
+    | "list";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -151,5 +154,20 @@
     <polyline points="14.5 2.5 14.5 6.5 10.5 6.5" />
     <path d="M16 10a6 6 0 0 1-10.24 4.24" />
     <polyline points="5.5 17.5 5.5 13.5 9.5 13.5" />
+  {:else if name === "pip"}
+    <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
+    <rect x="10" y="10.5" width="6" height="4" rx="0.8" fill="currentColor" stroke="none" />
+  {:else if name === "grid"}
+    <rect x="3" y="3" width="6" height="6" rx="1.2" />
+    <rect x="11" y="3" width="6" height="6" rx="1.2" />
+    <rect x="3" y="11" width="6" height="6" rx="1.2" />
+    <rect x="11" y="11" width="6" height="6" rx="1.2" />
+  {:else if name === "list"}
+    <rect x="3" y="4.5" width="2.5" height="2.5" rx="0.6" fill="currentColor" stroke="none" />
+    <line x1="8" y1="5.75" x2="17" y2="5.75" />
+    <rect x="3" y="8.75" width="2.5" height="2.5" rx="0.6" fill="currentColor" stroke="none" />
+    <line x1="8" y1="10" x2="17" y2="10" />
+    <rect x="3" y="13" width="2.5" height="2.5" rx="0.6" fill="currentColor" stroke="none" />
+    <line x1="8" y1="14.25" x2="17" y2="14.25" />
   {/if}
 </svg>
