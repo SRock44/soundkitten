@@ -109,7 +109,19 @@ export type Playlist = {
   artwork_url: string | null;
   track_count: number | null;
   tracks: Track[];
+  /** The playlist's owner. `null` for playlists sourced from an endpoint
+   * that doesn't embed it (e.g. the system-playlist shell in +page.svelte),
+   * or genuinely unknown -- treat `null` as "don't show owner controls",
+   * not "not owned." */
+  user: User | null;
 };
+
+/** Whether `me` (the logged-in user) owns `p` -- gates rename/delete/
+ * add-track/remove-track controls to playlists the user can actually
+ * mutate. */
+export function isOwnedPlaylist(p: Playlist, me: Profile | null): boolean {
+  return !!me && p.user?.id === me.id;
+}
 
 /**
  * SoundCloud-generated set ("Your Mix N", "Related tracks: ...", weekly

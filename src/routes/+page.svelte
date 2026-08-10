@@ -15,6 +15,7 @@
   import SyncStatusBar from "$lib/components/SyncStatusBar.svelte";
   import { likes as likesStore } from "$lib/stores/likes.svelte";
   import { following as followingStore } from "$lib/stores/following.svelte";
+  import { playlistsStore } from "$lib/stores/playlists.svelte";
   import { officialAuth } from "$lib/stores/officialAuth.svelte";
   import { player } from "$lib/stores/player.svelte";
   import { syncStatus } from "$lib/stores/syncStatus.svelte";
@@ -24,6 +25,8 @@
   import PersonCard from "$lib/components/PersonCard.svelte";
   import PersonListRow from "$lib/components/PersonListRow.svelte";
   import PlaylistListRow from "$lib/components/PlaylistListRow.svelte";
+  import PlaylistDetail from "$lib/components/PlaylistDetail.svelte";
+  import PlaylistNameModal from "$lib/components/PlaylistNameModal.svelte";
   import { viewMode } from "$lib/stores/viewMode.svelte";
 
   type AuthEvent = { ok: boolean; error: string | null };
@@ -55,9 +58,16 @@
   }
   let allSearchTracks = $derived(searchAllResults.filter(isTrackResult));
   let likes = $state<Track[]>([]);
-  let playlists = $state<Playlist[]>([]);
+  // Canonical source is playlistsStore (shared with the context menu's
+  // "Add to playlist" picker and PlaylistDetail's rename/delete, several
+  // component layers away) -- this is a read view onto it, not a second
+  // copy, so a create/rename/delete anywhere in the app is reflected here
+  // immediately with no extra plumbing.
+  let playlists = $derived(playlistsStore.items);
   let openPlaylist = $state<Playlist | null>(null);
   let openPlaylistLoading = $state(false);
+  let showCreatePlaylist = $state(false);
+  let createPlaylistError = $state("");
   let profileUserId = $state<number | null>(null);
   let selectedTrack = $state<Track | null>(null);
   let loading = $state(false);
@@ -121,6 +131,7 @@
       artwork_url: sp.artwork_url ?? sp.calculated_artwork_url,
       track_count: sp.tracks.length,
       tracks: [],
+      user: null, // not a real playlist -- no owner, PlaylistDetail's owner controls stay hidden
     };
     openPlaylist = shell;
     selectedTrack = null;
@@ -254,7 +265,7 @@
   }
 
   async function ensurePlaylistsLoaded(force = false) {
-    await syncWithCache("playlists", () => api.playlists(), (v) => (playlists = v), {
+    await syncWithCache("playlists", () => api.playlists(), (v) => playlistsStore.seed(v), {
       maxAgeMs: force ? 0 : 5 * 60 * 1000,
       onRateLimited: () => syncStatus.rateLimited(),
       onError: (e) => (loadError = `Failed to load playlists: ${e}`),
@@ -274,7 +285,7 @@
     await api.logout();
     loggedIn = false;
     likes = [];
-    playlists = [];
+    playlistsStore.seed([]);
     searchAllResults = [];
     searchResults = [];
     peopleResults = [];
@@ -447,7 +458,7 @@
               <div class="list">
                 {#each searchAllResults as item (item.kind + ":" + item.id)}
                   {#if item.kind === "track"}
-                    <TrackRow track={item} queue={allSearchTracks} index={allSearchTracks.indexOf(item)} onOpenProfile={openProfile} onOpenTrack={openTrack} />
+                    <TrackRow track={item} queue={allSearchTracks} index={allSearchTracks.indexOf(item)} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />
                   {:else if item.kind === "user"}
                     <PersonListRow {item} onOpen={(u) => openProfile(u.id)} />
                   {:else}
@@ -461,7 +472,7 @@
               <p class="muted">Search for tracks to get started.</p>
             {:else}
               <div class="list">
-                {#each searchResults as t, i}<TrackRow track={t} queue={searchResults} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
+                {#each searchResults as t, i}<TrackRow track={t} queue={searchResults} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />{/each}
               </div>
             {/if}
           {:else if peopleResults.length === 0}
@@ -490,32 +501,34 @@
           <p class="muted">No likes found.</p>
         {:else}
           <div class="list">
-            {#each likes as t, i}<TrackRow track={t} queue={likes} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
+            {#each likes as t, i}<TrackRow track={t} queue={likes} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />{/each}
           </div>
         {/if}
       {:else if view === "playlists"}
         {#if openPlaylist}
-          <button class="back" onclick={goBack}><Icon name="arrow-left" size={14} /> Back</button>
-          <h1>{openPlaylist.title ?? "Untitled playlist"}</h1>
-          {#if openPlaylistLoading}
-            <p class="muted">Loading tracks...</p>
-          {:else if loadError}
-            <p class="error-text">{loadError}</p>
-          {:else if openPlaylist.tracks.length === 0}
-            <p class="muted">This playlist has no tracks.</p>
-          {:else}
-            <div class="list">
-              {#each openPlaylist.tracks as t, i}<TrackRow track={t} queue={openPlaylist.tracks} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
-            </div>
-          {/if}
+          <PlaylistDetail
+            playlist={openPlaylist}
+            {me}
+            loading={openPlaylistLoading}
+            {loadError}
+            onBack={goBack}
+            onOpenProfile={openProfile}
+            onOpenTrack={openTrack}
+            onUpdated={(p) => (openPlaylist = p)}
+            onDeleted={goBack}
+          />
         {:else}
-          <h1>Playlists</h1>
+          <div class="playlists-header">
+            <h1>Playlists</h1>
+            <button class="new-playlist-btn" onclick={() => (showCreatePlaylist = true)}><Icon name="plus" size={14} /> New playlist</button>
+          </div>
+          {#if createPlaylistError}<p class="error-text">{createPlaylistError}</p>{/if}
           {#if loading}
             <p class="muted">Loading...</p>
           {:else if loadError}
             <p class="error-text">{loadError}</p>
           {:else if playlists.length === 0}
-            <p class="muted">No playlists found.</p>
+            <p class="muted">No playlists yet.</p>
           {:else}
             <div class="playlist-grid">
               {#each playlists as p}
@@ -531,10 +544,28 @@
               {/each}
             </div>
           {/if}
+          {#if showCreatePlaylist}
+            <PlaylistNameModal
+              heading="New playlist"
+              confirmLabel="Create"
+              onConfirm={async (title) => {
+                createPlaylistError = "";
+                try {
+                  const created = await playlistsStore.create(title);
+                  showCreatePlaylist = false;
+                  viewPlaylist(created);
+                } catch (e) {
+                  createPlaylistError = `Failed to create playlist: ${e}`;
+                  showCreatePlaylist = false;
+                }
+              }}
+              onClose={() => (showCreatePlaylist = false)}
+            />
+          {/if}
         {/if}
       {:else if view === "profile" && profileUserId !== null}
         {#key `${profileUserId}-${profileRefreshKey}`}
-          <ProfileView userId={profileUserId} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} isOwnProfile={me?.id === profileUserId} />
+          <ProfileView userId={profileUserId} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} isOwnProfile={me?.id === profileUserId} {me} />
         {/key}
       {/if}
     </main>
@@ -723,17 +754,36 @@ h1 {
   gap: 0.1rem;
 }
 
-.back {
+.playlists-header {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  background: none;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.playlists-header h1 {
+  margin: 0;
+}
+
+.new-playlist-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--accent);
+  color: white;
   border: none;
-  color: var(--muted);
-  cursor: pointer;
-  padding: 0;
-  margin-bottom: 0.75rem;
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
   font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.new-playlist-btn:hover {
+  background: var(--accent-hover);
 }
 
 .playlist-grid {

@@ -46,6 +46,10 @@ export const api = {
   unlikePlaylistV2: (playlistId: number) => invoke<void>("sc_unlike_playlist_v2", { playlistId }),
   followUserV2: (userId: number) => invoke<void>("sc_follow_user_v2", { userId }),
   unfollowUserV2: (userId: number) => invoke<void>("sc_unfollow_user_v2", { userId }),
+  createPlaylistV2: (title: string, trackIds: number[]) => invoke<Playlist>("sc_create_playlist_v2", { title, trackIds }),
+  updatePlaylistV2: (playlistId: number, title: string, trackIds: number[]) =>
+    invoke<Playlist>("sc_update_playlist_v2", { playlistId, title, trackIds }),
+  deletePlaylistV2: (playlistId: number) => invoke<void>("sc_delete_playlist_v2", { playlistId }),
 };
 
 // Tauri's custom URI scheme handlers are addressed differently per

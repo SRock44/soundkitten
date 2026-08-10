@@ -1,8 +1,12 @@
 <script lang="ts">
-  import type { Track } from "../types";
+  import type { Profile, Track } from "../types";
   import { formatDuration, isPlayable } from "../types";
   import { player } from "../stores/player.svelte";
+  import { likes } from "../stores/likes.svelte";
+  import { following } from "../stores/following.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import ContextMenu from "./ContextMenu.svelte";
+  import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
   import Icon from "./Icon.svelte";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 
@@ -12,12 +16,21 @@
     index,
     onOpenProfile,
     onOpenTrack,
+    me = null,
+    onRemoveFromPlaylist,
+    onOpenedOnSoundCloud,
   }: {
     track: Track;
     queue?: Track[];
     index?: number;
     onOpenProfile?: (id: number) => void;
     onOpenTrack?: (t: Track) => void;
+    /** Logged-in user, needed only to gate the "Add to playlist" menu item -- omit to hide it. */
+    me?: Profile | null;
+    /** Only passed from PlaylistDetail, for a playlist the viewer owns. */
+    onRemoveFromPlaylist?: (t: Track) => void;
+    /** Fired when a like/follow decline or failure falls back to opening the track on soundcloud.com. */
+    onOpenedOnSoundCloud?: () => void;
   } = $props();
 
   function openArtist(e: MouseEvent) {
@@ -46,10 +59,41 @@
   // globally for the same keypress.
 
   let menuPos = $state<{ x: number; y: number } | null>(null);
+  let showAddToPlaylist = $state(false);
 
   function openMenu(e: MouseEvent) {
     e.preventDefault();
     menuPos = { x: e.clientX, y: e.clientY };
+  }
+
+  let isLiked = $derived(likes.has(track.id));
+  let isFollowingArtist = $derived(track.user ? following.has(track.user.id) : false);
+
+  // The connect -> write -> update-store flow lives on the shared
+  // likes/following stores (see their doc comments); this just decides
+  // what to do on decline/failure, same pattern as PlayerBar/TrackDetail.
+  async function toggleLike() {
+    try {
+      if ((await likes.toggle(track)) === "declined" && track.permalink_url) {
+        openUrl(track.permalink_url);
+        onOpenedOnSoundCloud?.();
+      }
+    } catch (e) {
+      player.error = `Failed to ${isLiked ? "unlike" : "like"} track: ${e}`;
+    }
+  }
+
+  async function toggleFollowArtist() {
+    const user = track.user;
+    if (!user) return;
+    try {
+      if ((await following.toggle(user)) === "declined" && user.permalink_url) {
+        openUrl(user.permalink_url);
+        onOpenedOnSoundCloud?.();
+      }
+    } catch (e) {
+      player.error = `Failed to ${isFollowingArtist ? "unfollow" : "follow"}: ${e}`;
+    }
   }
 
   const menuItems = $derived([
@@ -61,9 +105,13 @@
         ]
       : []),
     ...(onOpenTrack ? [{ label: "View track", onSelect: () => onOpenTrack!(track) }] : []),
+    { label: isLiked ? "Unlike" : "Like", onSelect: toggleLike },
     ...(track.user && onOpenProfile
       ? [{ label: "Go to artist", onSelect: () => onOpenProfile!(track.user!.id) }]
       : []),
+    ...(track.user ? [{ label: isFollowingArtist ? "Unfollow artist" : "Follow artist", onSelect: toggleFollowArtist }] : []),
+    ...(me ? [{ label: "Add to playlist...", onSelect: () => (showAddToPlaylist = true) }] : []),
+    ...(onRemoveFromPlaylist ? [{ label: "Remove from playlist", danger: true, onSelect: () => onRemoveFromPlaylist!(track) }] : []),
     ...(track.permalink_url
       ? [{ label: "Copy link", onSelect: () => writeText(track.permalink_url!) }]
       : []),
@@ -112,6 +160,10 @@
 
 {#if menuPos}
   <ContextMenu x={menuPos.x} y={menuPos.y} items={menuItems} onClose={() => (menuPos = null)} />
+{/if}
+
+{#if showAddToPlaylist}
+  <AddToPlaylistModal {track} {me} onClose={() => (showAddToPlaylist = false)} />
 {/if}
 
 <style>

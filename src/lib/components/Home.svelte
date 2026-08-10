@@ -111,7 +111,7 @@
       <p class="muted">No recent activity from people you follow.</p>
     {:else}
       <div class="list" class:scrollable={feedExpanded}>
-        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as t, i}<TrackRow track={t} queue={feed} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+        {#each (feedExpanded ? feed : feed.slice(0, FEED_PREVIEW_COUNT)) as t, i}<TrackRow track={t} queue={feed} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
       </div>
       {#if feed.length > FEED_PREVIEW_COUNT}
         <button class="see-all" onclick={() => (feedExpanded = !feedExpanded)}>
@@ -125,7 +125,7 @@
     <section class="module">
       <h2>Recently played</h2>
       <div class="list">
-        {#each player.history as t, i}<TrackRow track={t} queue={player.history} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+        {#each player.history as t, i}<TrackRow track={t} queue={player.history} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
       </div>
     </section>
   {/if}
@@ -139,7 +139,7 @@
       <p class="muted">No likes yet.</p>
     {:else}
       <div class="list">
-        {#each likes.slice(0, 5) as t, i}<TrackRow track={t} queue={likes} index={i} {onOpenProfile} {onOpenTrack} />{/each}
+        {#each likes.slice(0, 5) as t, i}<TrackRow track={t} queue={likes} index={i} {onOpenProfile} {onOpenTrack} {me} />{/each}
       </div>
     {/if}
   </section>
