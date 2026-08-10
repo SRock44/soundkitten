@@ -15,19 +15,50 @@ const MINI_PLAYER_WINDOW_LABEL: &str = "mini-player";
 /// suppressed by a page-level `contextmenu` handler's `preventDefault()`
 /// -- confirmed live, the app's custom per-track context menu
 /// (TrackRow.svelte) never got a chance to render, the native WebView2
-/// menu won every time regardless. The only real fix is disabling it at
-/// the WebView2 settings level. No-op on macOS/Linux (WKWebView/
-/// WebKitGTK don't have this specific default-menu behavior, and their
-/// page-level preventDefault already works normally there).
+/// menu won every time regardless.
+///
+/// The first fix attempted here was `ICoreWebView2Settings.
+/// SetAreDefaultContextMenusEnabled(false)` -- WRONG, and confirmed live
+/// to make things worse: per Microsoft's own WebView2 docs
+/// (https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/context-menus),
+/// "If AreDefaultContextMenusEnabled is set to False ... the
+/// ContextMenuRequested event won't be raised" -- it doesn't just hide
+/// the native menu, it tears down the whole native context-menu request
+/// pipeline, and empirically that also meant the page's own
+/// `contextmenu`/right-button `mousedown` events stopped arriving at all
+/// (right-click did nothing whatsoever, not even the app's own menu).
+///
+/// The actual correct API for "build your own context-menu UI" (this
+/// app's exact use case, and Microsoft's own docs frame it this way) is
+/// `ICoreWebView2_11::add_ContextMenuRequested`: a native hook that fires
+/// on every right-click independent of the DOM's own `contextmenu`
+/// event, whose args expose `Handled` -- set it `true` to suppress only
+/// WebView2's native menu UI, leaving the page's own JS event handling
+/// (TrackRow.svelte's `oncontextmenu`/`onmousedown`) completely
+/// untouched. No-op on macOS/Linux (WKWebView/WebKitGTK don't have this
+/// native-menu-vs-DOM-event entanglement, and page-level preventDefault
+/// already works normally there).
 #[cfg(windows)]
 fn disable_default_context_menu(window: &tauri::WebviewWindow) {
     let _ = window.with_webview(|webview| {
+        use webview2_com::ContextMenuRequestedEventHandler;
+        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_11;
+        use windows::core::Interface;
+
         unsafe {
-            if let Ok(core) = webview.controller().CoreWebView2() {
-                if let Ok(settings) = core.Settings() {
-                    let _ = settings.SetAreDefaultContextMenusEnabled(false);
+            let Ok(core) = webview.controller().CoreWebView2() else { return };
+            let Ok(core11) = core.cast::<ICoreWebView2_11>() else { return };
+            let handler = ContextMenuRequestedEventHandler::create(Box::new(|_sender, args| {
+                if let Some(args) = args {
+                    args.SetHandled(true)?;
                 }
-            }
+                Ok(())
+            }));
+            // Token intentionally not retained -- this hook lives for the
+            // whole life of the window, same as the window itself never
+            // explicitly unregistering its close handler.
+            let mut token = Default::default();
+            let _ = core11.add_ContextMenuRequested(&handler, &mut token);
         }
     });
 }
