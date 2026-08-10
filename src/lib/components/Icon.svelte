@@ -55,10 +55,10 @@
   {:else if name === "heart-filled"}
     <path d="M10 17s-6.5-4-6.5-9A3.9 3.9 0 0 1 10 5.5 3.9 3.9 0 0 1 16.5 8c0 5-6.5 9-6.5 9Z" fill="currentColor" />
   {:else if name === "repost"}
-    <polyline points="4 7 4 13 10 13" />
-    <polyline points="16 13 16 7 10 7" />
-    <path d="M4 13a6 6 0 0 0 10.5 3.8" />
-    <path d="M16 7a6 6 0 0 0-10.5-3.8" />
+    <path d="M4 7.5h9a3 3 0 0 1 3 3v1" />
+    <polyline points="10.5 4.5 13.5 7.5 10.5 10.5" />
+    <path d="M16 12.5H7a3 3 0 0 1-3-3v-1" />
+    <polyline points="9.5 15.5 6.5 12.5 9.5 9.5" />
   {:else if name === "comment"}
     <path d="M3 4.5h14a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H8l-3.5 3v-3H3a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1Z" />
   {:else if name === "play"}

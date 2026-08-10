@@ -80,18 +80,31 @@
   // opened, not for every post in the feed up front -- fetching comments
   // for 15-50 feed items on load would be exactly the kind of request
   // burst that's gotten this app's account rate-limited before.
-  async function toggleComments() {
-    showComments = !showComments;
-    if (showComments && comments === null) {
-      commentsLoading = true;
-      commentsError = "";
-      try {
-        comments = await api.trackComments(track.id);
-      } catch (e) {
-        commentsError = `Failed to load comments: ${e}`;
-      }
-      commentsLoading = false;
+  async function loadCommentsIfNeeded() {
+    if (comments !== null || commentsLoading) return;
+    commentsLoading = true;
+    commentsError = "";
+    try {
+      comments = await api.trackComments(track.id);
+    } catch (e) {
+      commentsError = `Failed to load comments: ${e}`;
     }
+    commentsLoading = false;
+  }
+
+  /** The comment icon in the action bar toggles the thread open/closed. */
+  function toggleComments() {
+    showComments = !showComments;
+    if (showComments) loadCommentsIfNeeded();
+  }
+
+  /** The always-visible "Write a comment..." input only ever opens the
+   * thread (so it can't be closed out from under someone mid-typing) --
+   * gives the comment they're about to post some context instead of
+   * feeling like it's vanishing into a black box. */
+  function onQuickCommentFocus() {
+    showComments = true;
+    loadCommentsIfNeeded();
   }
 
   async function submitComment() {
@@ -102,6 +115,7 @@
       const c = await api.postComment(track.id, body);
       comments = [c, ...(comments ?? [])];
       newComment = "";
+      showComments = true;
     } catch (e) {
       commentsError = `Failed to post comment: ${e}`;
     }
@@ -188,15 +202,23 @@
     <ShareButton url={track.permalink_url} label="" />
   </div>
 
+  <form class="quick-comment" onsubmit={(e) => { e.preventDefault(); submitComment(); }}>
+    {#if me?.avatar_url}
+      <img src={me.avatar_url} alt="" class="quick-comment-avatar" loading="lazy" />
+    {:else}
+      <span class="quick-comment-avatar avatar-fallback"><Icon name="user" size={12} /></span>
+    {/if}
+    <input placeholder="Write a comment..." bind:value={newComment} onfocus={onQuickCommentFocus} disabled={postingComment} />
+    {#if newComment.trim()}
+      <button type="submit" disabled={postingComment}>Post</button>
+    {/if}
+  </form>
+
   {#if showComments}
     <div class="comments">
       {#if !officialAuth.connected}
         <p class="comment-hint">Comments are read-only until you connect the official login (like/reply prompts you the first time you try).</p>
       {/if}
-      <form class="comment-form" onsubmit={(e) => { e.preventDefault(); submitComment(); }}>
-        <input placeholder="Write a comment..." bind:value={newComment} disabled={postingComment} />
-        <button type="submit" disabled={postingComment || !newComment.trim()}>Post</button>
-      </form>
       {#if commentsLoading}
         <p class="muted">Loading comments...</p>
       {:else if commentsError}
@@ -472,15 +494,30 @@
   color: var(--muted);
 }
 
-.comment-form {
+.quick-comment {
   display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
 
-.comment-form input {
+.quick-comment-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--artwork-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.quick-comment input {
   flex: 1;
+  min-width: 0;
   padding: 0.5em 0.75em;
-  border-radius: 6px;
+  border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--nav-bg);
   color: inherit;
@@ -488,18 +525,20 @@
   font-size: 0.85rem;
 }
 
-.comment-form button {
+.quick-comment button {
+  flex-shrink: 0;
   padding: 0.5em 1em;
-  border-radius: 6px;
+  border-radius: 999px;
   border: none;
   background: var(--accent);
   color: white;
   cursor: pointer;
   font: inherit;
   font-size: 0.85rem;
+  font-weight: 600;
 }
 
-.comment-form button:disabled {
+.quick-comment button:disabled {
   opacity: 0.5;
   cursor: default;
 }

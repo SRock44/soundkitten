@@ -538,7 +538,7 @@
         {:else if feed.length === 0}
           <p class="muted">No recent activity from people you follow.</p>
         {:else}
-          <div class="feed-column">
+          <div class="feed-grid">
             {#each feed as entry (entry.track.id)}
               <FeedPost {entry} queue={feedTracks} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} />
             {/each}
@@ -808,11 +808,11 @@ h1 {
   font: inherit;
 }
 
-.feed-column {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  max-width: 34rem;
+.feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+  align-items: start;
 }
 
 .playlists-header {
