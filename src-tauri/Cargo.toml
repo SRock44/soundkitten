@@ -36,6 +36,7 @@ tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-single-instance = "2"
 
 # WebView2's own native right-click menu (Back/Forward/Reload/Save as/Print/
 # Inspect) is enabled by default and, critically, is NOT reliably suppressed

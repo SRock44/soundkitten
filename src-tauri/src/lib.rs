@@ -147,6 +147,16 @@ async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin registered (Tauri's own guidance) --
+        // when a second SoundKitten process launches, this detects the
+        // already-running one, hands it the new launch's argv/cwd here,
+        // and the second process exits on its own without ever opening a
+        // window. Without this, nothing stopped multiple instances from
+        // piling up (seen live: three at once on a Windows 10 machine),
+        // each with its own playback state, tray icon, and mini player.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
