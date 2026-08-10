@@ -78,6 +78,17 @@
     if (e.button === 2) openMenu(e);
   }
 
+  /** Guaranteed-to-work trigger for the same menu, via a plain left-click
+   * on a visible button -- no dependency on WebView2's right-click/
+   * contextmenu handling at all, so it can't be affected by whatever that
+   * turns out to need. Anchors the menu under the button rather than at
+   * the (nonexistent, for a click) mouse position. */
+  function openMenuAtButton(e: MouseEvent) {
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menuPos = { x: rect.right, y: rect.bottom + 4 };
+  }
+
   let isLiked = $derived(likes.has(track.id));
   let isFollowingArtist = $derived(track.user ? following.has(track.user.id) : false);
 
@@ -169,6 +180,9 @@
     <button class="artist" onclick={openArtist}>{track.user?.username ?? "Unknown artist"}</button>
   </span>
   <span class="duration">{formatDuration(track.duration)}</span>
+  <button class="more-btn" onclick={openMenuAtButton} aria-label="More options" title="More options">
+    <Icon name="more" size={15} />
+  </button>
 </div>
 
 {#if menuPos}
@@ -322,5 +336,31 @@
   color: var(--muted);
   flex-shrink: 0;
   font-variant-numeric: tabular-nums;
+}
+
+.more-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.row:hover .more-btn,
+.row:focus-within .more-btn {
+  opacity: 1;
+}
+
+.more-btn:hover {
+  background: var(--artwork-bg);
+  color: var(--fg);
 }
 </style>
