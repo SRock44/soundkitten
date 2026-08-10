@@ -10,6 +10,31 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 const MAIN_WINDOW_LABEL: &str = "main";
 const MINI_PLAYER_WINDOW_LABEL: &str = "mini-player";
 
+/// WebView2's own native right-click menu (Back/Forward/Reload/Save as/
+/// Print/Inspect) is enabled by default and does NOT reliably get
+/// suppressed by a page-level `contextmenu` handler's `preventDefault()`
+/// -- confirmed live, the app's custom per-track context menu
+/// (TrackRow.svelte) never got a chance to render, the native WebView2
+/// menu won every time regardless. The only real fix is disabling it at
+/// the WebView2 settings level. No-op on macOS/Linux (WKWebView/
+/// WebKitGTK don't have this specific default-menu behavior, and their
+/// page-level preventDefault already works normally there).
+#[cfg(windows)]
+fn disable_default_context_menu(window: &tauri::WebviewWindow) {
+    let _ = window.with_webview(|webview| {
+        unsafe {
+            if let Ok(core) = webview.controller().CoreWebView2() {
+                if let Ok(settings) = core.Settings() {
+                    let _ = settings.SetAreDefaultContextMenusEnabled(false);
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn disable_default_context_menu(_window: &tauri::WebviewWindow) {}
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = win.show();
@@ -49,7 +74,7 @@ async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
         // users who want a bigger widget can drag it larger -- the
         // frontend layout (MiniPlayer.svelte) is flex-based specifically
         // so it reflows sanely rather than just clipping.
-        WebviewWindowBuilder::new(&app, MINI_PLAYER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
+        let win = WebviewWindowBuilder::new(&app, MINI_PLAYER_WINDOW_LABEL, WebviewUrl::App("index.html".into()))
             .title("SoundKitten")
             .inner_size(320.0, 148.0)
             .min_inner_size(260.0, 120.0)
@@ -57,6 +82,7 @@ async fn open_mini_player(app: tauri::AppHandle) -> Result<(), String> {
             .decorations(false)
             .build()
             .map_err(|e| e.to_string())?;
+        disable_default_context_menu(&win);
     }
     if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
         let _ = main.hide();
@@ -74,6 +100,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("sc-stream", playback::handler)
         .setup(|app| {
+            if let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                disable_default_context_menu(&main);
+            }
+
             // Tray icon so closing the window (see the CloseRequested
             // handler below) can hide it instead of quitting -- playback
             // keeps running in the hidden window, and this is how the user

@@ -37,6 +37,17 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
 
+# WebView2's own native right-click menu (Back/Forward/Reload/Save as/Print/
+# Inspect) is enabled by default and, critically, is NOT reliably suppressed
+# by a page-level `contextmenu` `preventDefault()` in WRY -- confirmed live,
+# the app's custom context menu (TrackRow.svelte) never even got a chance to
+# render, the native menu won. Only fix is disabling it at the WebView2
+# settings level, see lib.rs's setup hook. Windows-only: macOS/Linux use
+# WKWebView/WebKitGTK, which don't have this specific default-menu behavior.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = ["Win32_Foundation"] }
+
 [profile.release]
 opt-level = "z"    # optimize for binary size -- this app is I/O-bound (HTTP + audio streaming), not compute-bound, so raw speed headroom matters less than a smaller/faster-to-load binary
 lto = true
