@@ -204,6 +204,28 @@ pub async fn official_write(
     Ok((status, body))
 }
 
+/// Same as official_write but sends a JSON body -- needed for playlist
+/// create/update, which (unlike the bodiless like/follow writes) take a
+/// `{"playlist": {...}}` payload per SoundCloud's classic API docs.
+pub async fn official_write_json(
+    client: &reqwest::Client,
+    method: reqwest::Method,
+    path: &str,
+    access_token: &str,
+    body: &Value,
+) -> Result<(reqwest::StatusCode, Value)> {
+    let resp = client
+        .request(method, format!("{OFFICIAL_API}{path}"))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .json(body)
+        .send()
+        .await?;
+    let status = resp.status();
+    let text = resp.text().await?;
+    let body: Value = serde_json::from_str(&text).unwrap_or(Value::String(text.clone()));
+    Ok((status, body))
+}
+
 /// Tests the official access_token against the UNOFFICIAL api-v2 host, using
 /// the same Authorization scheme the unofficial API expects. If this works,
 /// it means one login flow (official OAuth) could replace both the client_id
