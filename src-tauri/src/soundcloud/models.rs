@@ -218,6 +218,11 @@ pub struct Playlist {
     pub track_count: Option<i64>,
     #[serde(default)]
     pub tracks: Vec<Track>,
+    /// The playlist's owner. `None` for playlists sourced from an endpoint
+    /// that doesn't embed it -- absence doesn't mean "not owned by anyone",
+    /// callers gating owner-only controls should treat `None` as "unknown,
+    /// don't show owner controls" rather than "not owned."
+    pub user: Option<User>,
 }
 
 /// SoundCloud's generated/algorithmic sets ("Your Mix N", "Related tracks:

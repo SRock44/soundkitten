@@ -180,6 +180,9 @@ pub fn run() {
             official_oauth::sc_unlike_playlist_v2,
             official_oauth::sc_follow_user_v2,
             official_oauth::sc_unfollow_user_v2,
+            official_oauth::sc_create_playlist_v2,
+            official_oauth::sc_update_playlist_v2,
+            official_oauth::sc_delete_playlist_v2,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
