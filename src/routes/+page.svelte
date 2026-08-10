@@ -26,7 +26,7 @@
   import PersonListRow from "$lib/components/PersonListRow.svelte";
   import PlaylistListRow from "$lib/components/PlaylistListRow.svelte";
   import PlaylistDetail from "$lib/components/PlaylistDetail.svelte";
-  import FeedRow from "$lib/components/FeedRow.svelte";
+  import FeedPost from "$lib/components/FeedPost.svelte";
   import PlaylistNameModal from "$lib/components/PlaylistNameModal.svelte";
   import { viewMode } from "$lib/stores/viewMode.svelte";
 
@@ -538,9 +538,9 @@
         {:else if feed.length === 0}
           <p class="muted">No recent activity from people you follow.</p>
         {:else}
-          <div class="list">
-            {#each feed as entry, i (entry.track.id)}
-              <FeedRow {entry} index={i} queue={feedTracks} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} />
+          <div class="feed-column">
+            {#each feed as entry (entry.track.id)}
+              <FeedPost {entry} queue={feedTracks} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} />
             {/each}
           </div>
         {/if}
@@ -806,6 +806,13 @@ h1 {
   padding: 0;
   margin-bottom: 0.75rem;
   font: inherit;
+}
+
+.feed-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 34rem;
 }
 
 .playlists-header {
