@@ -812,7 +812,15 @@ h1 {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 1.25rem;
-  align-items: start;
+  /* Default (stretch), not align-items: start -- with every card's
+     content now the same natural height (see FeedPost.svelte's
+     repost-tag-slot/header-sub/title truncation), stretch makes every
+     card in the grid match exactly instead of each sizing to its own
+     content and looking ragged next to its neighbors. */
+}
+
+.feed-grid > :global(.post) {
+  height: 100%;
 }
 
 .playlists-header {

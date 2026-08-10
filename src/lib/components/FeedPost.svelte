@@ -138,12 +138,17 @@
 </script>
 
 <article class="post">
-  {#if entry.is_repost && entry.reposted_by}
-    <button class="repost-tag" onclick={openReposter}>
-      <Icon name="repost" size={13} />
-      <span>Reposted by <strong>{entry.reposted_by.username ?? "someone"}</strong></span>
-    </button>
-  {/if}
+  <!-- Fixed-height slot regardless of whether this is a repost -- letting
+       the element itself come and go was the single biggest source of
+       cards ending up visibly different heights in the feed grid. -->
+  <div class="repost-tag-slot">
+    {#if entry.is_repost && entry.reposted_by}
+      <button class="repost-tag" onclick={openReposter}>
+        <Icon name="repost" size={13} />
+        <span class="repost-tag-text">Reposted by <strong>{entry.reposted_by.username ?? "someone"}</strong></span>
+      </button>
+    {/if}
+  </div>
 
   <div class="post-header">
     <button class="avatar-btn" onclick={openArtist} aria-label={track.user?.username ?? "Artist"}>
@@ -260,6 +265,11 @@
   padding: 1.1rem;
 }
 
+.repost-tag-slot {
+  height: 1.1rem;
+  margin-bottom: -0.35rem;
+}
+
 .repost-tag {
   display: flex;
   align-items: center;
@@ -267,12 +277,20 @@
   background: none;
   border: none;
   padding: 0;
-  margin: 0 0 -0.25rem;
+  margin: 0;
   color: var(--muted);
   font: inherit;
   font-size: 0.78rem;
   cursor: pointer;
-  width: fit-content;
+  width: 100%;
+  max-width: 100%;
+}
+
+.repost-tag-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .repost-tag:hover {
@@ -338,6 +356,10 @@
 }
 
 .header-sub {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: 0.78rem;
   color: var(--muted);
 }
