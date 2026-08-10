@@ -32,7 +32,8 @@
     | "user"
     | "user-filled"
     | "cloud"
-    | "refresh";
+    | "refresh"
+    | "pip";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -151,5 +152,8 @@
     <polyline points="14.5 2.5 14.5 6.5 10.5 6.5" />
     <path d="M16 10a6 6 0 0 1-10.24 4.24" />
     <polyline points="5.5 17.5 5.5 13.5 9.5 13.5" />
+  {:else if name === "pip"}
+    <rect x="2.5" y="4" width="15" height="12" rx="1.5" />
+    <rect x="10" y="10.5" width="6" height="4" rx="0.8" fill="currentColor" stroke="none" />
   {/if}
 </svg>

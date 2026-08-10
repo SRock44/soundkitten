@@ -18,6 +18,7 @@ function makeTrack(id: number, overrides: Partial<Track> = {}): Track {
     playback_count: null,
     created_at: null,
     media: { transcodings: [{ format: { protocol: "progressive", mime_type: "audio/mpeg" } }] },
+    waveform_url: null,
     ...overrides,
   };
 }

@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Comment, Playlist, Profile, Selection, Track, UserComment } from "./types";
 
 export const api = {
+  openMiniPlayer: () => invoke<void>("open_mini_player"),
   isLoggedIn: () => invoke<boolean>("is_logged_in"),
   startLogin: () => invoke<void>("start_login"),
   verifyAuth: () => invoke<boolean>("verify_auth"),

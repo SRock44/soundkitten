@@ -6,6 +6,7 @@
   import LoginScreen from "$lib/components/LoginScreen.svelte";
   import TopNav from "$lib/components/TopNav.svelte";
   import PlayerBar from "$lib/components/PlayerBar.svelte";
+  import MiniPlayer from "$lib/components/MiniPlayer.svelte";
   import TrackRow from "$lib/components/TrackRow.svelte";
   import ProfileView from "$lib/components/Profile.svelte";
   import Home from "$lib/components/Home.svelte";
@@ -23,6 +24,15 @@
 
   type AuthEvent = { ok: boolean; error: string | null };
   type View = "home" | "search" | "likes" | "playlists" | "profile";
+
+  // The mini player is the same bundled entry point opened in a second,
+  // distinctly-labeled window (this app has no SvelteKit sub-routes at all,
+  // see svelte.config.js -- everything is one page with in-page view
+  // state, by design). It's a thin remote control with no <audio> element
+  // and no seeded stores of its own, so none of the normal boot sequence
+  // below (auth check, likes/playlists sync, tray-focused listeners) should
+  // run there -- see MiniPlayer.svelte for its own event wiring.
+  const isMiniPlayer = getCurrentWindow().label === "mini-player";
 
   let loggedIn = $state(false);
   let authChecked = $state(false);
@@ -321,25 +331,30 @@
     if (searchQuery.trim()) runSearch();
   }
 
-  refreshAuth();
-  checkForUpdates();
-  getCurrentWindow().onFocusChanged(({ payload: focused }) => {
-    if (focused) syncLikesIfChanged();
-  });
-  listen<AuthEvent>("auth:result", async (event) => {
-    authStatus = event.payload.ok ? "" : `Login failed: ${event.payload.error ?? "unknown error"}`;
-    await refreshAuth();
-  });
-  // Fires once the auto-chained official OAuth connect (right after
-  // primary login) finishes in the background. Without this, a successful
-  // onboarding connect would go unnoticed by the frontend until the app
-  // was relaunched, so the very first like or follow would prompt again
-  // for no reason.
-  listen<boolean>("official_auth:result", (event) => {
-    officialAuth.connected = event.payload;
-  });
+  if (!isMiniPlayer) {
+    refreshAuth();
+    checkForUpdates();
+    getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) syncLikesIfChanged();
+    });
+    listen<AuthEvent>("auth:result", async (event) => {
+      authStatus = event.payload.ok ? "" : `Login failed: ${event.payload.error ?? "unknown error"}`;
+      await refreshAuth();
+    });
+    // Fires once the auto-chained official OAuth connect (right after
+    // primary login) finishes in the background. Without this, a successful
+    // onboarding connect would go unnoticed by the frontend until the app
+    // was relaunched, so the very first like or follow would prompt again
+    // for no reason.
+    listen<boolean>("official_auth:result", (event) => {
+      officialAuth.connected = event.payload;
+    });
+  }
 </script>
 
+{#if isMiniPlayer}
+  <MiniPlayer />
+{:else}
 <div class="window">
   <div class="window-body">
 {#if !authChecked}
@@ -467,6 +482,7 @@
 {/if}
   </div>
 </div>
+{/if}
 
 <style>
 :global(:root) {

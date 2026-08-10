@@ -157,6 +157,17 @@ export class PlayerStore {
     safeStorageSet(VOLUME_KEY, String(v));
   }
 
+  private preMuteVolume = 1;
+
+  toggleMute() {
+    if (this.volume > 0) {
+      this.preMuteVolume = this.volume;
+      this.setVolume(0);
+    } else {
+      this.setVolume(this.preMuteVolume > 0 ? this.preMuteVolume : 1);
+    }
+  }
+
   toggleShuffle() {
     this.shuffle = !this.shuffle;
     safeStorageSet(SHUFFLE_KEY, String(this.shuffle));

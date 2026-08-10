@@ -138,6 +138,14 @@ pub struct Track {
     pub comment_count: Option<i64>,
     pub playback_count: Option<i64>,
     pub created_at: Option<String>,
+    /// Points to a small public, CORS-open JSON file on wave.sndcdn.com
+    /// ({width, height, samples: [...]}) -- SoundCloud's own precomputed
+    /// per-track amplitude envelope, the same data their own player draws
+    /// as the orange waveform. Confirmed live (real API response): no
+    /// client_id or auth needed to fetch it, so the frontend fetches it
+    /// directly (see PlayerBar.svelte's loadWaveform) rather than needing
+    /// a Rust-side proxy.
+    pub waveform_url: Option<String>,
 }
 
 impl Track {
