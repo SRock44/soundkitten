@@ -747,6 +747,7 @@ main {
      enough to fit regardless, exposed once Home's content became taller. */
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 1.5rem 2rem;
   box-sizing: border-box;
 }

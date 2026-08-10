@@ -297,6 +297,7 @@ h2 {
 .feed-list {
   max-height: 26rem;
   overflow-y: auto;
+  overflow-x: hidden;
   gap: 0.4rem;
   margin: 0 -0.5rem;
   padding: 0 0.5rem;
