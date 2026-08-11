@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2
+
+### Fixes
+- Adjusting the volume slider (main window or mini player) could silently pin the displayed playback position at whatever was last saved, freezing the progress bar until the next track change, even though playback itself kept going normally underneath.
+- Pressing Space to pause right after adjusting the volume slider stopped working, since focus was still on the slider and it was being treated as a text-entry field.
+
 ## 0.2.1
 
 ### Navigation & search
