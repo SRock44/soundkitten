@@ -13,6 +13,7 @@ export const api = {
   me: () => invoke<Profile>("sc_me"),
   userProfile: (userId: number) => invoke<Profile>("sc_user_profile", { userId }),
   userTracks: (userId: number) => invoke<Track[]>("sc_user_tracks", { userId }),
+  relatedTracks: (trackId: number) => invoke<Track[]>("sc_related_tracks", { trackId }),
   searchUsers: (query: string) => invoke<Profile[]>("sc_search_users", { query }),
   searchAll: (query: string) => invoke<SearchResultItem[]>("sc_search_all", { query }),
   feed: () => invoke<FeedEntry[]>("sc_feed"),

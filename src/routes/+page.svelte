@@ -446,7 +446,7 @@
     <main bind:this={mainEl}>
       {#if selectedTrack}
         {#key trackDetailRefreshKey}
-          <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} {me} />
+          <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} />
         {/key}
       {:else if view === "home"}
         <Home {me} {likes} {playlists} {feed} {feedLoading} {feedError} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
@@ -536,7 +536,7 @@
           <p class="muted">No likes found.</p>
         {:else if viewMode.playlistView === "tiles"}
           <div class="track-grid">
-            {#each likes as t (t.id)}<TrackCard track={t} queue={likes} onOpenProfile={openProfile} onOpenTrack={openTrack} />{/each}
+            {#each likes as t (t.id)}<TrackCard track={t} queue={likes} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />{/each}
           </div>
         {:else}
           <div class="list">

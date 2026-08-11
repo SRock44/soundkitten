@@ -8,14 +8,22 @@
   import ShareButton from "./ShareButton.svelte";
   import FollowButton from "./FollowButton.svelte";
   import AddToPlaylistModal from "./AddToPlaylistModal.svelte";
+  import TrackCard from "./TrackCard.svelte";
   import { openUrl } from "@tauri-apps/plugin-opener";
 
   let {
     track,
     onBack,
     onOpenProfile,
+    onOpenTrack,
     me = null,
-  }: { track: Track; onBack: () => void; onOpenProfile: (id: number) => void; me?: Profile | null } = $props();
+  }: {
+    track: Track;
+    onBack: () => void;
+    onOpenProfile: (id: number) => void;
+    onOpenTrack?: (t: Track) => void;
+    me?: Profile | null;
+  } = $props();
 
   let isLiked = $derived(likes.has(track.id));
   let isCurrent = $derived(player.current?.id === track.id);
@@ -41,6 +49,41 @@
       .then((c) => (comments = c))
       .catch((e) => (commentsError = `Failed to load comments: ${e}`))
       .finally(() => (commentsLoading = false));
+  });
+
+  // Both of these are supplementary/recommendation content, not core to the
+  // page -- a failure just means an empty shelf (silently logged), not a
+  // user-facing error, matching Profile.svelte's own userTracks fetch.
+  let relatedTracks = $state<Track[]>([]);
+  let relatedLoading = $state(true);
+
+  $effect(() => {
+    relatedLoading = true;
+    relatedTracks = [];
+    api
+      .relatedTracks(track.id)
+      .then((t) => (relatedTracks = t))
+      .catch((e) => console.error("failed to load related tracks", e))
+      .finally(() => (relatedLoading = false));
+  });
+
+  let moreByArtist = $state<Track[]>([]);
+  let moreByArtistLoading = $state(true);
+
+  $effect(() => {
+    const userId = track.user?.id;
+    if (!userId) {
+      moreByArtist = [];
+      moreByArtistLoading = false;
+      return;
+    }
+    moreByArtistLoading = true;
+    moreByArtist = [];
+    api
+      .userTracks(userId)
+      .then((t) => (moreByArtist = t.filter((other) => other.id !== track.id)))
+      .catch((e) => console.error("failed to load more tracks by artist", e))
+      .finally(() => (moreByArtistLoading = false));
   });
 
   // The connect -> write -> update-store flow lives on the shared `likes`
@@ -166,6 +209,36 @@
   <span class="spacer"></span>
   <ShareButton url={track.permalink_url} />
 </div>
+
+{#if track.user && (moreByArtistLoading || moreByArtist.length > 0)}
+  <section class="shelf-section">
+    <h2>More by {track.user.username ?? "this artist"}</h2>
+    {#if moreByArtistLoading}
+      <p class="muted">Loading...</p>
+    {:else}
+      <div class="shelf">
+        {#each moreByArtist as t (t.id)}
+          <TrackCard track={t} queue={moreByArtist} {onOpenProfile} {onOpenTrack} {me} />
+        {/each}
+      </div>
+    {/if}
+  </section>
+{/if}
+
+{#if relatedLoading || relatedTracks.length > 0}
+  <section class="shelf-section">
+    <h2>Related tracks</h2>
+    {#if relatedLoading}
+      <p class="muted">Loading...</p>
+    {:else}
+      <div class="shelf">
+        {#each relatedTracks as t (t.id)}
+          <TrackCard track={t} queue={relatedTracks} {onOpenProfile} {onOpenTrack} {me} />
+        {/each}
+      </div>
+    {/if}
+  </section>
+{/if}
 
 {#if commentsError}
   <p class="error-text">{commentsError}</p>
@@ -596,5 +669,33 @@
 
 .comment-text {
   overflow-wrap: break-word;
+}
+
+.shelf-section {
+  margin-bottom: 2rem;
+}
+
+.shelf-section h2 {
+  margin: 0 0 0.85rem;
+  font-size: 1.05rem;
+}
+
+.shelf {
+  display: flex;
+  gap: 1.1rem;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  padding: 0.1rem 0.1rem 0.5rem;
+  /* Same reasoning as PlaylistShelf.svelte's identical rule -- a visible
+     scrollbar under a horizontal card rail reads as unfinished. */
+  scrollbar-width: none;
+}
+
+.shelf::-webkit-scrollbar {
+  display: none;
+}
+
+.shelf > :global(.track-tile) {
+  flex: 0 0 152px;
 }
 </style>

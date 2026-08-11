@@ -77,6 +77,14 @@ pub async fn sc_user_tracks(user_id: i64) -> Result<Vec<Track>, String> {
 }
 
 #[tauri::command]
+pub async fn sc_related_tracks(track_id: i64) -> Result<Vec<Track>, String> {
+    let client = http_client();
+    api::get_related_tracks(&client, track_id, get_stored_token().as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn sc_search_users(query: String) -> Result<Vec<Profile>, String> {
     let client = http_client();
     api::search_users(&client, &query, get_stored_token().as_deref())

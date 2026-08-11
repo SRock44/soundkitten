@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlayerStore } from "./player.svelte";
+import { api } from "../api";
 import type { Track } from "../types";
+
+vi.mock("../api", () => ({
+  api: { relatedTracks: vi.fn() },
+  streamUrl: (id: number) => `sc-stream://${id}`,
+}));
 
 function makeTrack(id: number, overrides: Partial<Track> = {}): Track {
   return {
@@ -72,6 +78,10 @@ beforeEach(() => {
   vi.stubGlobal("localStorage", makeMemoryStorage());
   // never hit the network in tests -- _loadCurrent's fetch should fail fast and silently
   vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("no network in tests"))));
+  // Defaults to "nothing related" so existing end-of-queue tests keep
+  // seeing the pre-autoplay-related behavior (playback just stops) unless a
+  // test explicitly opts in with its own mockResolvedValue.
+  vi.mocked(api.relatedTracks).mockReset().mockResolvedValue([]);
   player = new PlayerStore();
   player.attach(makeFakeAudioEl());
 });
@@ -307,13 +317,16 @@ describe("unplayable (DRM) tracks are auto-skipped", () => {
     expect(player.current!.id).toBe(2);
   });
 
-  it("a queue that's entirely DRM stops gracefully instead of spinning forever", () => {
+  it("a queue that's entirely DRM stops gracefully instead of spinning forever", async () => {
     const tracks = [makeDrmTrack(1), makeDrmTrack(2), makeDrmTrack(3)];
     player.play(tracks[0], tracks);
     // play() itself tries to auto-skip forward from track 1; with everything
-    // DRM-locked it should land at the last track and simply give up there.
+    // DRM-locked it should land at the last track, try (and, per the
+    // beforeEach default, fail to find) related tracks to fall back to, and
+    // only then give up there -- that fallback attempt is async, hence the
+    // await below.
     expect(player.queueIndex).toBe(2);
-    expect(player.error).toBeTruthy();
+    await vi.waitFor(() => expect(player.error).toBeTruthy());
   });
 
   it("does not push duplicate or intermediate (skipped-over) tracks into history", () => {
@@ -599,5 +612,89 @@ describe("position watchdog (self-heals a stalled timeupdate without disturbing 
     vi.advanceTimersByTime(5000);
 
     expect(player.currentTime).toBe(5); // no watchdog left to pick up the change
+  });
+});
+
+describe("autoplay related tracks when the queue ends", () => {
+  it("next() past the end of the queue plays related tracks instead of stopping", async () => {
+    const tracks = [makeTrack(1)];
+    player.play(tracks[0], tracks);
+    vi.mocked(api.relatedTracks).mockResolvedValue([makeTrack(99)]);
+
+    player.next();
+    await vi.waitFor(() => expect(player.queue.length).toBe(2));
+
+    expect(player.queueIndex).toBe(1);
+    expect(player.current!.id).toBe(99);
+    expect(player.queue.map((t) => t.id)).toEqual([1, 99]);
+    expect(player.notice).toContain("related");
+  });
+
+  it("onTrackEnded() at the last track also triggers the fallback (the real 'song finished' path)", async () => {
+    const tracks = [makeTrack(1)];
+    player.play(tracks[0], tracks);
+    vi.mocked(api.relatedTracks).mockResolvedValue([makeTrack(99)]);
+
+    player.onTrackEnded();
+    await vi.waitFor(() => expect(player.current!.id).toBe(99));
+  });
+
+  it("does nothing when there are no related tracks -- playback just stops, as before", async () => {
+    const tracks = [makeTrack(1)];
+    player.play(tracks[0], tracks);
+    vi.mocked(api.relatedTracks).mockResolvedValue([]); // matches the beforeEach default, explicit here for clarity
+
+    player.next();
+    await vi.waitFor(() => expect(api.relatedTracks).toHaveBeenCalled());
+    await Promise.resolve();
+
+    expect(player.queue.length).toBe(1);
+    expect(player.queueIndex).toBe(0);
+  });
+
+  it("filters out related tracks already present in the queue", async () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    vi.mocked(api.relatedTracks).mockResolvedValue([makeTrack(2), makeTrack(3)]); // track 2 is already in the queue
+
+    player.next(); // advances 1 -> 2 normally, nothing related fetched yet
+    expect(player.current!.id).toBe(2);
+
+    player.next(); // now at the real end -- fetches related, should only add track 3
+    await vi.waitFor(() => expect(player.queue.length).toBe(3));
+
+    expect(player.current!.id).toBe(3);
+    expect(player.queue.map((t) => t.id)).toEqual([1, 2, 3]);
+  });
+
+  it("loop=all wraps around instead of ever fetching related tracks", () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    player.cycleLoop(); // -> all
+    player.next(); // -> track 2
+
+    player.next(); // wraps back to track 1
+
+    expect(player.queueIndex).toBe(0);
+    expect(api.relatedTracks).not.toHaveBeenCalled();
+  });
+
+  it("discards a stale related-tracks fetch if a different track was explicitly played in the meantime", async () => {
+    const tracks = [makeTrack(1)];
+    player.play(tracks[0], tracks);
+    let resolveRelated: (v: Track[]) => void = () => {};
+    vi.mocked(api.relatedTracks).mockReturnValue(new Promise((r) => (resolveRelated = r)));
+
+    player.next(); // kicks off the related-tracks fetch, left pending
+
+    const other = makeTrack(2);
+    player.play(other); // a brand-new, unrelated load starts while that fetch is still in flight
+
+    resolveRelated([makeTrack(99)]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(player.current!.id).toBe(2); // untouched by the now-stale related-tracks result
+    expect(player.queue).toEqual([other]);
   });
 });

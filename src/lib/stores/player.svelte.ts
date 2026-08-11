@@ -1,4 +1,4 @@
-import { streamUrl } from "../api";
+import { api, streamUrl } from "../api";
 import { isPlayable, type Track } from "../types";
 
 const VOLUME_KEY = "sc-desktop:volume";
@@ -475,6 +475,16 @@ export class PlayerStore {
       return;
     }
     if (!this._stepIndex(direction)) {
+      // Reaching the end going forward is exactly the same "nowhere left to
+      // go" case next() hits at the natural end of a queue -- fall through
+      // to the same related-tracks extension instead of duplicating it here.
+      if (direction === 1) {
+        this._tryExtendWithRelated(() => {
+          this.error = `"${track.title ?? "track"}" is unavailable and there's nothing else to play.`;
+          this.audioEl?.pause();
+        });
+        return;
+      }
       this.error = `"${track.title ?? "track"}" is unavailable and there's nothing else to play.`;
       this.audioEl?.pause(); // nothing left to skip to in this direction
       return;
@@ -556,7 +566,65 @@ export class PlayerStore {
    */
   next() {
     this.pendingSeek = null; // moving off the restored track invalidates its pending seek
-    if (!this._stepIndex(1)) return;
+    if (!this._stepIndex(1)) {
+      this._tryExtendWithRelated();
+      return;
+    }
+    this._loadCurrent(1, 0);
+    this._pushHistory(this.current);
+    this._persistQueue();
+  }
+
+  /**
+   * Called whenever there's nowhere left to advance to (queue exhausted,
+   * loop isn't "all") -- rather than just going silent, pulls in tracks
+   * related to whatever just finished and keeps playing, the same "keep
+   * listening" behavior SoundCloud's own app has at the end of a playlist,
+   * album, or artist queue. Appends to the existing queue (so it's still
+   * exactly the original playlist/album with more tacked on, not a
+   * replacement) and advances into the first new track.
+   *
+   * Gives up quietly by default -- playback just stops, as it did before
+   * this existed -- if the fetch fails or comes back with nothing genuinely
+   * new (e.g. everything returned is already in this queue). That's the
+   * right outcome for the everyday "you reached the end of your playlist"
+   * case: not an error, just nothing more to play. `onNoneFound`, passed
+   * only from the DRM-skip-chain call site, restores the real error message
+   * for the genuinely-different case of a queue that turned out to be
+   * entirely unplayable -- there this IS a failure worth surfacing, not a
+   * graceful end.
+   */
+  private async _tryExtendWithRelated(onNoneFound?: () => void) {
+    const seed = this.current;
+    if (!seed) {
+      onNoneFound?.();
+      return;
+    }
+    const tokenAtCallTime = this.loadToken;
+    let related: Track[];
+    try {
+      related = await api.relatedTracks(seed.id);
+    } catch {
+      onNoneFound?.();
+      return;
+    }
+    // A new load (manual track pick, a totally different play() call, etc.)
+    // started while that fetch was in flight -- this result is stale, don't
+    // act on it (and don't run onNoneFound either -- something else already
+    // happened, this fetch just no longer matters).
+    if (tokenAtCallTime !== this.loadToken) return;
+    const existingIds = new Set(this.queue.map((t) => t.id));
+    const fresh = related.filter((t) => !existingIds.has(t.id));
+    if (fresh.length === 0) {
+      onNoneFound?.();
+      return;
+    }
+
+    this.queue = [...this.queue, ...fresh];
+    this.originalQueue = [...this.originalQueue, ...fresh];
+    this.shuffleFrontier = this.queueIndex; // the newly-appended tail is unshuffled -- _shuffleNextSlot randomizes into it normally from here if shuffle is on
+    this.queueIndex += 1;
+    this.notice = "Queue ended -- now playing related tracks";
     this._loadCurrent(1, 0);
     this._pushHistory(this.current);
     this._persistQueue();

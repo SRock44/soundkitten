@@ -2,9 +2,20 @@
 
 ## 0.2.2
 
+### Discovery
+- Reaching the end of a playlist, album, or artist queue no longer just stops playback -- it keeps going with related tracks, the same "keep listening" behavior SoundCloud's own app has. Your original queue is left intact with more tacked onto the end, and it keeps extending for as long as there's more to find. Loop still takes priority when it's on, and a queue that turns out to be entirely unplayable still tells you so instead of silently giving up.
+
+### Track detail page
+- Redesigned to match the rest of the app: bigger artwork with a play/pause overlay, an artist avatar and follow button next to the title, an Add to playlist action, and a pill-style comment composer with your avatar.
+- Adds "Related tracks" and "More by {artist}" shelves so there's always something to jump to instead of a mostly-empty page.
+
+### Likes
+- New tile view alongside the existing list, matching the tiles/rows toggle Search and Playlists already have.
+
 ### Fixes
 - Adjusting the volume slider (main window or mini player) could silently pin the displayed playback position at whatever was last saved, freezing the progress bar until the next track change, even though playback itself kept going normally underneath.
 - Pressing Space to pause right after adjusting the volume slider stopped working, since focus was still on the slider and it was being treated as a text-entry field.
+- Tracks shown as tiles (Likes' new tile view, and the detail page's new shelves) weren't right-clickable -- they were missing the same context menu (Like, Follow, Add to playlist, Play next, Copy link, etc.) the row view already has.
 
 ## 0.2.1
 
