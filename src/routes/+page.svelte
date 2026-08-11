@@ -8,6 +8,7 @@
   import PlayerBar from "$lib/components/PlayerBar.svelte";
   import MiniPlayer from "$lib/components/MiniPlayer.svelte";
   import TrackRow from "$lib/components/TrackRow.svelte";
+  import TrackCard from "$lib/components/TrackCard.svelte";
   import ProfileView from "$lib/components/Profile.svelte";
   import Home from "$lib/components/Home.svelte";
   import TrackDetail from "$lib/components/TrackDetail.svelte";
@@ -445,7 +446,7 @@
     <main bind:this={mainEl}>
       {#if selectedTrack}
         {#key trackDetailRefreshKey}
-          <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} />
+          <TrackDetail track={selectedTrack} onBack={goBack} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} />
         {/key}
       {:else if view === "home"}
         <Home {me} {likes} {playlists} {feed} {feedLoading} {feedError} onNavigate={navigate} onOpenProfile={openProfile} onOpenTrack={openTrack} onOpenPlaylist={viewPlaylist} onOpenSystemPlaylist={viewSystemPlaylist} />
@@ -516,13 +517,27 @@
           {/if}
         </section>
       {:else if view === "likes"}
-        <h1>Likes</h1>
+        <div class="search-header">
+          <h1>Likes</h1>
+          <div class="view-toggle" role="group" aria-label="Likes display">
+            <button class:active={viewMode.playlistView === "tiles"} onclick={() => viewMode.setPlaylistView("tiles")} aria-label="Tile view" title="Tile view">
+              <Icon name="grid" size={15} />
+            </button>
+            <button class:active={viewMode.playlistView === "rows"} onclick={() => viewMode.setPlaylistView("rows")} aria-label="Row view" title="Row view">
+              <Icon name="list" size={15} />
+            </button>
+          </div>
+        </div>
         {#if loading}
           <p class="muted">Loading...</p>
         {:else if loadError}
           <p class="error-text">{loadError}</p>
         {:else if likes.length === 0}
           <p class="muted">No likes found.</p>
+        {:else if viewMode.playlistView === "tiles"}
+          <div class="track-grid">
+            {#each likes as t (t.id)}<TrackCard track={t} queue={likes} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />{/each}
+          </div>
         {:else}
           <div class="list">
             {#each likes as t, i}<TrackRow track={t} queue={likes} index={i} onOpenProfile={openProfile} onOpenTrack={openTrack} {me} onOpenedOnSoundCloud={scheduleLikesSyncCheck} />{/each}
@@ -956,5 +971,11 @@ h1 {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 1.5rem;
+}
+
+.track-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 1.25rem;
 }
 </style>

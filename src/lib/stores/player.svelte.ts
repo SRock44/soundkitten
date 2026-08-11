@@ -1,4 +1,4 @@
-import { streamUrl } from "../api";
+import { api, streamUrl } from "../api";
 import { isPlayable, type Track } from "../types";
 
 const VOLUME_KEY = "sc-desktop:volume";
@@ -80,6 +80,12 @@ export class PlayerStore {
    * fetch -- see restore()'s comment for why loading is deferred at all.
    */
   pendingSeek = $state<number | null>(null);
+  /** Raw position/duration from the <audio> element -- see onTimeUpdate/onDurationChange. Private: read via the currentTime/duration getters below, which also account for pendingSeek. */
+  private _liveCurrentTime = $state(0);
+  private _liveDuration = $state(0);
+  /** Wall-clock time of the last onTimeUpdate() call -- see the watchdog in startPositionWatchdog(). */
+  private lastTimeUpdateAt = 0;
+  private watchdogId: ReturnType<typeof setInterval> | null = null;
 
   get current(): Track | null {
     return this.queueIndex >= 0 && this.queueIndex < this.queue.length ? this.queue[this.queueIndex] : null;
@@ -89,9 +95,83 @@ export class PlayerStore {
     return this.queue.slice(this.queueIndex + 1);
   }
 
+  /** Live playback position in seconds -- pendingSeek (a restored-but-not-yet-loaded position) takes priority, same as before this was owned by the store. */
+  get currentTime(): number {
+    return this.pendingSeek !== null ? this.pendingSeek : this._liveCurrentTime;
+  }
+
+  /** Live track duration in seconds -- falls back to the track's own metadata (no network needed) until the real <audio> element has it. */
+  get duration(): number {
+    if (this._liveDuration > 0) return this._liveDuration;
+    return (this.current?.duration ?? 0) / 1000;
+  }
+
   attach(el: HTMLAudioElement) {
     this.audioEl = el;
     el.volume = this.volume;
+    this.startPositionWatchdog();
+  }
+
+  /** Wire to <audio>'s ontimeupdate. */
+  onTimeUpdate() {
+    if (!this.audioEl) return;
+    this._liveCurrentTime = this.audioEl.currentTime;
+    this.lastTimeUpdateAt = Date.now();
+    this.savePositionTick();
+  }
+
+  /** Wire to <audio>'s ondurationchange. */
+  onDurationChange() {
+    if (!this.audioEl) return;
+    this._liveDuration = this.audioEl.duration || 0;
+  }
+
+  /**
+   * Seeks playback and updates `currentTime` immediately -- doesn't wait for
+   * the next timeupdate/watchdog tick, which (if paused, or mid-flight)
+   * might not land for a while and would otherwise leave the scrubber
+   * showing the pre-seek position.
+   */
+  seek(target: number) {
+    if (!this.audioEl || !this.duration) return;
+    if (this.pendingSeek !== null && !this.audioEl.src) {
+      this.loadPendingRestore(target);
+      return;
+    }
+    this.audioEl.currentTime = target;
+    this._liveCurrentTime = target;
+    this.lastTimeUpdateAt = Date.now();
+  }
+
+  /**
+   * `ontimeupdate` is not a reliable heartbeat -- confirmed live that a
+   * flood of rapid, unrelated UI events (e.g. dragging the volume slider,
+   * which fires dozens of `input` events a second) can starve the event
+   * loop long enough that it silently stops arriving for a stretch, while
+   * the real audio keeps playing underneath regardless. Rather than an
+   * unconditional poll (which was tried and reverted -- it raced with
+   * seek(): reading the element back on a fixed timer could catch it before
+   * a fresh seek had settled and stomp the just-set position with a stale
+   * read), this only steps in once onTimeUpdate() has gone quiet for
+   * nearly a full second despite playback supposedly being active --  well
+   * past the point any seek's synchronous currentTime write would have
+   * taken effect, so it never has a fresh seek to clobber.
+   */
+  private startPositionWatchdog() {
+    if (this.watchdogId !== null) return;
+    this.watchdogId = setInterval(() => {
+      if (!this.isPlaying || !this.audioEl) return;
+      if (Date.now() - this.lastTimeUpdateAt < 900) return;
+      this.onTimeUpdate();
+    }, 1000);
+  }
+
+  /** Stops the watchdog interval -- call on teardown (component unmount / test cleanup) so it doesn't keep firing against a torn-down audio element. */
+  destroy() {
+    if (this.watchdogId !== null) {
+      clearInterval(this.watchdogId);
+      this.watchdogId = null;
+    }
   }
 
   /**
@@ -395,6 +475,16 @@ export class PlayerStore {
       return;
     }
     if (!this._stepIndex(direction)) {
+      // Reaching the end going forward is exactly the same "nowhere left to
+      // go" case next() hits at the natural end of a queue -- fall through
+      // to the same related-tracks extension instead of duplicating it here.
+      if (direction === 1) {
+        this._tryExtendWithRelated(() => {
+          this.error = `"${track.title ?? "track"}" is unavailable and there's nothing else to play.`;
+          this.audioEl?.pause();
+        });
+        return;
+      }
       this.error = `"${track.title ?? "track"}" is unavailable and there's nothing else to play.`;
       this.audioEl?.pause(); // nothing left to skip to in this direction
       return;
@@ -476,7 +566,65 @@ export class PlayerStore {
    */
   next() {
     this.pendingSeek = null; // moving off the restored track invalidates its pending seek
-    if (!this._stepIndex(1)) return;
+    if (!this._stepIndex(1)) {
+      this._tryExtendWithRelated();
+      return;
+    }
+    this._loadCurrent(1, 0);
+    this._pushHistory(this.current);
+    this._persistQueue();
+  }
+
+  /**
+   * Called whenever there's nowhere left to advance to (queue exhausted,
+   * loop isn't "all") -- rather than just going silent, pulls in tracks
+   * related to whatever just finished and keeps playing, the same "keep
+   * listening" behavior SoundCloud's own app has at the end of a playlist,
+   * album, or artist queue. Appends to the existing queue (so it's still
+   * exactly the original playlist/album with more tacked on, not a
+   * replacement) and advances into the first new track.
+   *
+   * Gives up quietly by default -- playback just stops, as it did before
+   * this existed -- if the fetch fails or comes back with nothing genuinely
+   * new (e.g. everything returned is already in this queue). That's the
+   * right outcome for the everyday "you reached the end of your playlist"
+   * case: not an error, just nothing more to play. `onNoneFound`, passed
+   * only from the DRM-skip-chain call site, restores the real error message
+   * for the genuinely-different case of a queue that turned out to be
+   * entirely unplayable -- there this IS a failure worth surfacing, not a
+   * graceful end.
+   */
+  private async _tryExtendWithRelated(onNoneFound?: () => void) {
+    const seed = this.current;
+    if (!seed) {
+      onNoneFound?.();
+      return;
+    }
+    const tokenAtCallTime = this.loadToken;
+    let related: Track[];
+    try {
+      related = await api.relatedTracks(seed.id);
+    } catch {
+      onNoneFound?.();
+      return;
+    }
+    // A new load (manual track pick, a totally different play() call, etc.)
+    // started while that fetch was in flight -- this result is stale, don't
+    // act on it (and don't run onNoneFound either -- something else already
+    // happened, this fetch just no longer matters).
+    if (tokenAtCallTime !== this.loadToken) return;
+    const existingIds = new Set(this.queue.map((t) => t.id));
+    const fresh = related.filter((t) => !existingIds.has(t.id));
+    if (fresh.length === 0) {
+      onNoneFound?.();
+      return;
+    }
+
+    this.queue = [...this.queue, ...fresh];
+    this.originalQueue = [...this.originalQueue, ...fresh];
+    this.shuffleFrontier = this.queueIndex; // the newly-appended tail is unshuffled -- _shuffleNextSlot randomizes into it normally from here if shuffle is on
+    this.queueIndex += 1;
+    this.notice = "Queue ended -- now playing related tracks";
     this._loadCurrent(1, 0);
     this._pushHistory(this.current);
     this._persistQueue();

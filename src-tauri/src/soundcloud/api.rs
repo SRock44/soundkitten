@@ -172,6 +172,16 @@ pub async fn search_users(client: &reqwest::Client, query: &str, oauth_token: Op
     Ok(resp.collection)
 }
 
+/// Tracks SoundCloud's own recommendation engine considers similar to a
+/// given track ("Related tracks" on soundcloud.com's track page). Confirmed
+/// live: GET /tracks/{id}/related works without an OAuth token, same
+/// {collection: [...]} shape as every other track-list endpoint.
+pub async fn get_related_tracks(client: &reqwest::Client, track_id: i64, oauth_token: Option<&str>) -> anyhow::Result<Vec<Track>> {
+    let path = format!("/tracks/{track_id}/related");
+    let resp: SearchTracksResponse = authed_get(client, &path, &[("limit", "10")], oauth_token).await?;
+    Ok(resp.collection)
+}
+
 /// Personalized activity stream (new uploads/reposts from people you follow) --
 /// this is what backs SoundCloud's own "Feed"/Home. Only the first page is
 /// fetched since it's a preview list, not a fully paginated view.

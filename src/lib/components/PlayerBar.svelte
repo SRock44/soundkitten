@@ -10,6 +10,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { emit, listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { untrack } from "svelte";
 
   let {
     onOpenTrack,
@@ -18,31 +19,29 @@
   }: { onOpenTrack: (t: Track) => void; onOpenProfile: (id: number) => void; onOpenedOnSoundCloud?: () => void } = $props();
 
   let audioEl: HTMLAudioElement;
-  // Raw values from the <audio> element itself -- 0 until something's
-  // actually been fetched. A restored-but-not-yet-loaded track (see
-  // player.restore()) has no audio loaded at all, so the displayed
-  // position/duration fall back to what we already know from the track's
-  // own metadata and the saved position, without waiting on any network.
-  let liveCurrentTime = $state(0);
-  let liveDuration = $state(0);
-  let currentTime = $derived(player.pendingSeek !== null ? player.pendingSeek : liveCurrentTime);
-  let duration = $derived(liveDuration > 0 ? liveDuration : (player.current?.duration ?? 0) / 1000);
+  // Position/duration live on the store now (player.currentTime/player.duration)
+  // -- see player.svelte.ts's onTimeUpdate/onDurationChange/seek/watchdog --
+  // so they're consistently correct for both this window's own scrubber and
+  // whatever reads them for the mini player, and are unit-testable without
+  // needing a real <audio> element or a mounted component.
   let isPlaying = $state(false);
   let showQueue = $state(false);
   let dragIndex = $state<number | null>(null);
-  // `ontimeupdate` only fires a few times a second (browsers throttle it,
-  // not a per-frame event), and the scrubber fill had no CSS transition --
-  // every tick just teleported the width straight to the new value, which
-  // reads as choppy/"splotchy" next to anything actually smooth. Same fix
-  // as the mini player's waveform reveal: snap instantly to the true
-  // position (no transition) whenever it changes, then hand a single
-  // transition all the way to the track's end off to the compositor --
-  // cheap (no per-frame JS at all) and re-syncs automatically on every
-  // ontimeupdate tick, so drift never has room to accumulate.
+  // player.currentTime only updates a few times a second (see
+  // onTimeUpdate/the watchdog in player.svelte.ts), and the scrubber fill
+  // had no CSS transition -- every tick just teleported the width straight
+  // to the new value, which reads as choppy/"splotchy" next to anything
+  // actually smooth. Same fix as the mini player's waveform reveal: snap
+  // instantly to the true position (no transition) whenever it changes,
+  // then hand a single transition all the way to the track's end off to
+  // the compositor -- cheap (no per-frame JS at all) and re-syncs
+  // automatically on every update, so drift never has room to accumulate.
   let scrubberFillPct = $state(0);
   let scrubberTransitionSec = $state(0);
 
   $effect(() => {
+    const duration = player.duration;
+    const currentTime = player.currentTime;
     if (duration <= 0) {
       scrubberTransitionSec = 0;
       scrubberFillPct = 0;
@@ -97,8 +96,8 @@
     return {
       track: player.current,
       isPlaying,
-      position: currentTime,
-      duration,
+      position: player.currentTime,
+      duration: player.duration,
       shuffle: player.shuffle,
       loop: player.loop,
       isLiked,
@@ -107,23 +106,6 @@
       waveform: waveformSamples,
       upcoming: player.upcoming.slice(0, 8),
     };
-  }
-
-  function seekTo(target: number) {
-    if (!duration) return;
-    if (player.pendingSeek !== null && !audioEl.src) {
-      player.loadPendingRestore(target);
-      return;
-    }
-    audioEl.currentTime = target;
-    // audioEl.currentTime updates synchronously the instant it's assigned,
-    // but the 'timeupdate' event that normally syncs liveCurrentTime to it
-    // fires asynchronously -- without this, anything that reads the
-    // derived `currentTime` right after a seek (e.g. the immediate
-    // mini-player emits below) would still see the pre-seek position, and
-    // if playback is paused there's no timeupdate coming at all until play
-    // resumes, so the stale value would stick indefinitely.
-    liveCurrentTime = target;
   }
 
   function dispatchMiniCommand(command: MiniPlayerCommand) {
@@ -136,7 +118,7 @@
       case "toggleLike": toggleLike(); break;
       case "toggleFollow": toggleFollowForCurrent(); break;
       case "seek":
-        seekTo(command.position);
+        player.seek(command.position);
         emit("player:state", miniPlayerState());
         break;
       case "toggleMute": player.toggleMute(); break;
@@ -199,26 +181,37 @@
     loadWaveform(player.current);
   });
 
+  // Mount-only: this must run exactly once, but attach() internally reads
+  // player.volume (`el.volume = this.volume`) -- without `untrack`, Svelte
+  // counts that as a dependency of THIS effect too (the same bug class as
+  // the structural effect below), so it was silently re-running on every
+  // single volume tick. That re-ran restore(), which re-imports whatever
+  // position was last persisted to localStorage into pendingSeek -- and
+  // since the currentTime getter always prefers pendingSeek when it's
+  // non-null, that permanently pinned the displayed position at that stale
+  // value even though the real audioEl.currentTime kept ticking along fine
+  // underneath. Confirmed live (debug logging, since removed): this, not a
+  // stalled timeupdate or an IPC flood, was the actual volume/progress-bar
+  // freeze.
   $effect(() => {
-    player.attach(audioEl);
-    player.restore();
+    untrack(() => {
+      player.attach(audioEl);
+      player.restore();
+    });
+    return () => player.destroy();
   });
   $effect(() => {
     player.isPlaying = isPlaying;
   });
 
-  // While the window is hidden (minimized to tray, or just backgrounded),
-  // the browser throttles background timers, including how often
-  // ontimeupdate fires -- audio playback itself keeps running unthrottled
-  // (deliberately, so background audio doesn't cut out), but the displayed
-  // position can silently fall behind and stay stuck until a throttled
-  // update eventually lands. Force a resync the moment the page is visible
-  // again instead of waiting on that.
+  // Browsers throttle background timers uniformly (ontimeupdate included),
+  // so a backgrounded window's position can lag until the next throttled
+  // tick lands (the watchdog in player.svelte.ts covers the steady-state
+  // case, but that's a once-a-second poll -- no need to wait on it here).
+  // Force an immediate resync the moment the window becomes visible again.
   $effect(() => {
     function resync() {
-      if (document.visibilityState !== "visible" || !audioEl) return;
-      liveCurrentTime = audioEl.currentTime;
-      if (audioEl.duration) liveDuration = audioEl.duration;
+      if (document.visibilityState === "visible") player.onTimeUpdate();
     }
     document.addEventListener("visibilitychange", resync);
     return () => document.removeEventListener("visibilitychange", resync);
@@ -226,10 +219,17 @@
 
   // Structural changes (track switch, play/pause, shuffle, loop, like,
   // follow, queue contents) push a fresh snapshot to the mini player right
-  // away. Position/duration piggyback on whatever the most recent snapshot
-  // was rather than triggering their own emit on every timeupdate tick --
-  // the interval effect below covers live scrubber movement instead, so the
-  // mini player isn't getting a full cross-window event 4x/second.
+  // away. Position/duration/volume piggyback on whatever the most recent
+  // snapshot was rather than triggering their own emit here -- the interval
+  // effect below covers live scrubber movement instead, so the mini player
+  // isn't getting a full cross-window IPC event on every position tick (or,
+  // confirmed live, dozens of times a second while the volume slider is
+  // being dragged: miniPlayerState() reads player.volume/currentTime/
+  // duration internally, and without `untrack`, Svelte counts those as
+  // dependencies of THIS effect too since it reads them synchronously --
+  // silently turning "structural changes only" into "also volume changes,
+  // also every position tick", flooding the IPC channel and starving
+  // everything else on the event loop long enough to look like a freeze).
   $effect(() => {
     player.current;
     isPlaying;
@@ -238,7 +238,7 @@
     isLiked;
     isFollowing;
     player.upcoming.length;
-    emit("player:state", miniPlayerState());
+    untrack(() => emit("player:state", miniPlayerState()));
   });
 
   $effect(() => {
@@ -275,11 +275,11 @@
   });
 
   function seek(e: MouseEvent) {
-    if (!duration) return;
+    if (!player.duration) return;
     const bar = e.currentTarget as HTMLElement;
     const rect = bar.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
-    seekTo(pct * duration);
+    player.seek(pct * player.duration);
     emit("player:state", miniPlayerState());
   }
 
@@ -287,9 +287,16 @@
     player.setVolume(Number((e.target as HTMLInputElement).value));
   }
 
+  // Range inputs (the volume slider) are deliberately NOT treated as a
+  // typing target -- dragging it with the mouse leaves it focused, and
+  // without this exception space would silently stop toggling playback
+  // right after you touch the volume, with no visible cause. Real text
+  // entry (search boxes, comments, playlist names) still blocks it.
   function isTypingTarget(el: EventTarget | null): boolean {
     if (!(el instanceof HTMLElement)) return false;
-    return el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
+    if (el.isContentEditable || el.tagName === "TEXTAREA") return true;
+    if (el.tagName === "INPUT") return (el as HTMLInputElement).type !== "range";
+    return false;
   }
 
   function onGlobalKeydown(e: KeyboardEvent) {
@@ -323,8 +330,8 @@
 <div class="player-bar">
   <audio
     bind:this={audioEl}
-    ontimeupdate={() => { liveCurrentTime = audioEl.currentTime; player.savePositionTick(); }}
-    ondurationchange={() => (liveDuration = audioEl.duration || 0)}
+    ontimeupdate={() => player.onTimeUpdate()}
+    ondurationchange={() => player.onDurationChange()}
     onplay={() => (isPlaying = true)}
     onpause={() => { isPlaying = false; player.savePositionTick(true); }}
     onended={() => player.onTrackEnded()}
@@ -438,9 +445,9 @@
         <Icon name="cloud" size={15} />
       </button>
       <div class="time-display">
-        <span>{formatDuration(currentTime * 1000)}</span>
+        <span>{formatDuration(player.currentTime * 1000)}</span>
         <span class="sep">/</span>
-        <span>{formatDuration(duration * 1000)}</span>
+        <span>{formatDuration(player.duration * 1000)}</span>
       </div>
       <button class="queue-toggle" class:active={showQueue} onclick={() => (showQueue = !showQueue)} aria-label="Toggle queue"><Icon name="queue" size={15} /></button>
       <button class="queue-toggle" onclick={() => api.openMiniPlayer()} aria-label="Mini player" title="Mini player"><Icon name="pip" size={15} /></button>
