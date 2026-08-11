@@ -37,8 +37,9 @@ export class PlayerStore {
   queueIndex = $state(-1);
   isPlaying = $state(false);
   error = $state<string | null>(null);
-  /** Transient "skipped a DRM/unplayable track" message -- distinct from `error`, which is reserved for an actually-stuck player. Cleared once the next track starts playing. */
+  /** Transient status message ("skipped a DRM/unplayable track", "queue ended, playing related tracks") -- distinct from `error`, which is reserved for an actually-stuck player. Always shown through _showNotice() below, which auto-clears it after a few seconds so it never lingers as a permanent banner. */
   notice = $state<string | null>(null);
+  private noticeTimer: ReturnType<typeof setTimeout> | undefined;
   history = $state<Track[]>([]);
   /** Set by whoever started the current queue from a playlist/mix (see
    * PlaylistCard.svelte), so its card can show pause instead of play and
@@ -172,6 +173,27 @@ export class PlayerStore {
       clearInterval(this.watchdogId);
       this.watchdogId = null;
     }
+    clearTimeout(this.noticeTimer);
+  }
+
+  /**
+   * Shows a transient status message and schedules it to clear itself --
+   * these are meant to be a passing "here's what just happened", not a
+   * permanent banner. Previously "Queue ended -- now playing related
+   * tracks" had no clear path at all (unlike the DRM-skip notice below,
+   * which gets cleared early by a successful recovery load) and just sat
+   * there indefinitely once shown.
+   */
+  private _showNotice(text: string, ms = 6000) {
+    clearTimeout(this.noticeTimer);
+    this.notice = text;
+    this.noticeTimer = setTimeout(() => this._clearNotice(), ms);
+  }
+
+  private _clearNotice() {
+    clearTimeout(this.noticeTimer);
+    this.noticeTimer = undefined;
+    this.notice = null;
   }
 
   /**
@@ -470,7 +492,7 @@ export class PlayerStore {
     if (this.currentBlobUrl) URL.revokeObjectURL(this.currentBlobUrl);
     this.currentBlobUrl = URL.createObjectURL(blob);
     this.audioEl.src = this.currentBlobUrl;
-    if (skipDepth > 0) this.notice = null; // successfully recovered from a skip chain
+    if (skipDepth > 0) this._clearNotice(); // successfully recovered from a skip chain
 
     if (opts.seekTo !== undefined) {
       const el = this.audioEl;
@@ -502,7 +524,7 @@ export class PlayerStore {
     detail: string,
     opts: { autoplay?: boolean } = {},
   ) {
-    this.notice = `Skipped "${track.title ?? "track"}" (${detail}).`;
+    this._showNotice(`Skipped "${track.title ?? "track"}" (${detail}).`);
 
     if (skipDepth + 1 >= PlayerStore.MAX_AUTO_SKIPS) {
       this.error = "Too many unplayable tracks in a row -- stopped.";
@@ -665,7 +687,7 @@ export class PlayerStore {
     if (this.shuffle) this._shuffleRemainingNow();
     else this.shuffleFrontier = this.queueIndex;
     this.queueIndex += 1;
-    this.notice = "Queue ended -- now playing related tracks";
+    this._showNotice("Queue ended -- now playing related tracks");
     this._loadCurrent(1, 0);
     this._pushHistory(this.current);
     this._persistQueue();
