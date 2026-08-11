@@ -630,6 +630,18 @@ describe("autoplay related tracks when the queue ends", () => {
     expect(player.notice).toContain("related");
   });
 
+  it("the 'now playing related tracks' notice clears itself after a few seconds instead of lingering forever", async () => {
+    const tracks = [makeTrack(1)];
+    player.play(tracks[0], tracks);
+    vi.mocked(api.relatedTracks).mockResolvedValue([makeTrack(99)]);
+
+    player.next();
+    await vi.waitFor(() => expect(player.notice).toContain("related"));
+
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(player.notice).toBeNull();
+  });
+
   it("onTrackEnded() at the last track also triggers the fallback (the real 'song finished' path)", async () => {
     const tracks = [makeTrack(1)];
     player.play(tracks[0], tracks);
