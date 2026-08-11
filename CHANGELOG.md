@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.4
+
+### Fixes
+- The "Queue ended -- now playing related tracks" notice would stay on screen forever once it showed up. It now clears itself after a few seconds, same as other transient notices.
+
 ## 0.2.3
 
 ### Home
