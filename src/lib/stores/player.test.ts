@@ -698,3 +698,142 @@ describe("autoplay related tracks when the queue ends", () => {
     expect(player.queue).toEqual([other]);
   });
 });
+
+describe("shuffle accuracy (the queue panel must always match what plays next)", () => {
+  it("a restored queue that was already shuffled is not re-shuffled by the first next()", async () => {
+    const tracks = [1, 2, 3, 4, 5].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+    player.random = () => 0; // real, non-identity permutation
+    player.toggleShuffle();
+    const shuffledUpNext = player.upcoming.map((t) => t.id);
+    player.savePositionTick(true);
+
+    const restored = new PlayerStore();
+    const fakeEl = makeFakeAudioEl();
+    restored.attach(fakeEl);
+    await restored.restore();
+
+    // What was shown as "up next" right before restart must still be
+    // "up next" right after -- previously, restore() always marked the
+    // whole restored queue as unshuffled, so this first next() would
+    // silently re-randomize the immediate next slot instead of honoring
+    // what was already displayed.
+    expect(restored.upcoming.map((t) => t.id)).toEqual(shuffledUpNext);
+    restored.next();
+    expect(restored.current!.id).toBe(shuffledUpNext[0]);
+  });
+
+  it("related tracks appended at the end of the queue are shuffled in immediately, not lazily", async () => {
+    const tracks = [makeTrack(1)];
+    player.play(tracks[0], tracks);
+    player.toggleShuffle(); // nothing to shuffle yet (queue length 1) -- fine
+    player.random = () => 0; // real, non-identity permutation
+    vi.mocked(api.relatedTracks).mockResolvedValue([makeTrack(2), makeTrack(3), makeTrack(4), makeTrack(5)]);
+
+    player.next(); // queue exhausted -- pulls in related tracks
+    await vi.waitFor(() => expect(player.queue.length).toBe(5));
+
+    // Which related track becomes current, and the order of the rest, must
+    // both be randomized together -- previously the newly-appended block
+    // landed in the API's original order (current included) and only got
+    // scrambled one slot at a time, lazily, as each was actually reached.
+    const landedOrder = [player.current!.id, ...player.upcoming.map((t) => t.id)];
+    expect(landedOrder).not.toEqual([2, 3, 4, 5]);
+    expect(new Set(landedOrder)).toEqual(new Set([2, 3, 4, 5]));
+  });
+
+  it("playNext() while shuffled doesn't let a later playNext() re-scramble already-fixed tracks", () => {
+    const tracks = [1, 2, 3, 4, 5].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+    player.random = () => 0;
+    player.toggleShuffle(); // fully fixes the whole remaining order
+
+    player.playNext(makeTrack(10));
+    const upNextAfterFirstInsert = player.upcoming.map((t) => t.id);
+    player.random = () => 0.9; // if the frontier bookkeeping is off, this would now shuffle something
+    player.playNext(makeTrack(11));
+
+    // Both inserted tracks land right after current; everything that was
+    // already fixed before either insert keeps its exact relative order.
+    expect(player.upcoming[0].id).toBe(11);
+    expect(player.upcoming[1].id).toBe(10);
+    expect(player.upcoming.slice(2).map((t) => t.id)).toEqual(upNextAfterFirstInsert.slice(1));
+  });
+});
+
+describe("playFromQueue (click-to-play from the Up next panel)", () => {
+  it("jumps straight to the clicked track and starts loading it", () => {
+    const tracks = [1, 2, 3, 4].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+
+    player.playFromQueue(2); // track 3
+    expect(player.queueIndex).toBe(2);
+    expect(player.current!.id).toBe(3);
+  });
+
+  it("does nothing for an out-of-range or already-current index", () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+
+    player.playFromQueue(0); // already current
+    expect(player.queueIndex).toBe(0);
+    player.playFromQueue(99); // out of range
+    expect(player.queueIndex).toBe(0);
+  });
+
+  it("jumping ahead while shuffled doesn't disturb the already-fixed order it jumps through", () => {
+    const tracks = [1, 2, 3, 4, 5].map((id) => makeTrack(id));
+    player.play(tracks[0], tracks);
+    player.random = () => 0;
+    player.toggleShuffle(); // fixes the whole remaining order up front
+    const fixedOrder = player.upcoming.map((t) => t.id);
+
+    player.playFromQueue(3); // jump ahead several tracks
+    player.random = () => 0.9; // would produce a visibly different pick if anything got reshuffled
+    player.next();
+
+    // The track after the jump target is exactly what was shown before the
+    // jump -- clicking into the queue shouldn't perturb the order that was
+    // already displayed.
+    expect(player.current!.id).toBe(fixedOrder[3]);
+  });
+});
+
+describe("previous() restart-vs-skip-back", () => {
+  it("restarts the current track instead of skipping back once it's past the threshold", () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    player.next(); // now on track 2
+    (player.audioEl as unknown as { currentTime: number }).currentTime = 10;
+    player.onTimeUpdate();
+
+    player.previous();
+    expect(player.current!.id).toBe(2); // still track 2, not track 1
+    expect(player.currentTime).toBe(0); // restarted
+  });
+
+  it("skips to the actual previous track when already near the start", () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    player.next(); // now on track 2, currentTime still 0
+
+    player.previous();
+    expect(player.current!.id).toBe(1);
+  });
+
+  it("pressing previous twice in a row (restart, then back) reaches the actual previous track", () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    player.play(tracks[0], tracks);
+    player.next();
+    (player.audioEl as unknown as { currentTime: number }).currentTime = 10;
+    player.onTimeUpdate();
+
+    player.previous(); // restarts track 2
+    expect(player.current!.id).toBe(2);
+    (player.audioEl as unknown as { currentTime: number }).currentTime = 0;
+    player.onTimeUpdate();
+
+    player.previous(); // now actually goes back
+    expect(player.current!.id).toBe(1);
+  });
+});

@@ -41,7 +41,8 @@
     | "plus"
     | "trash"
     | "pencil"
-    | "more";
+    | "more"
+    | "gear";
 
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
@@ -195,5 +196,16 @@
     <circle cx="4.5" cy="10" r="1.3" fill="currentColor" stroke="none" />
     <circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none" />
     <circle cx="15.5" cy="10" r="1.3" fill="currentColor" stroke="none" />
+  {:else if name === "gear"}
+    <circle cx="10" cy="10" r="4" />
+    <circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none" />
+    <line x1="10" y1="6" x2="10" y2="3.5" />
+    <line x1="10" y1="14" x2="10" y2="16.5" />
+    <line x1="6" y1="10" x2="3.5" y2="10" />
+    <line x1="14" y1="10" x2="16.5" y2="10" />
+    <line x1="12.8" y1="7.2" x2="14.5" y2="5.5" />
+    <line x1="7.2" y1="12.8" x2="5.5" y2="14.5" />
+    <line x1="12.8" y1="12.8" x2="14.5" y2="14.5" />
+    <line x1="7.2" y1="7.2" x2="5.5" y2="5.5" />
   {/if}
 </svg>

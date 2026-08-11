@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.3
+
+### Home
+- New animated Home banner: a running cat scene synced to the real time of day and season. No location permission involved -- it picks up your OS's own configured timezone, with a manual override via a small gear icon on the banner. Off by default; turn it on from Settings, or from the same gear icon shown on the plain header.
+
+### Player
+- Clicking a track in the "Up next" queue (main window or mini player) now jumps straight to it and starts playing immediately.
+- Pressing Previous now restarts the current track if you're more than a few seconds into it, and only jumps back to the actual previous track on a second press -- matches how the skip-back button works in every other music player.
+
+### Fixes
+- In shuffle mode, the "Up next" list could quietly disagree with what actually played next in three specific situations: right after restarting the app, when the queue auto-extended with related tracks at the end, and after using "Play Next" more than once in a row. All three now always match the real upcoming order.
+
 ## 0.2.2
 
 ### Discovery

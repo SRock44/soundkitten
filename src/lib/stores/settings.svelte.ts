@@ -1,4 +1,5 @@
 const PERFORMANCE_MODE_KEY = "sc-desktop:performance-mode";
+const HOME_BANNER_KEY = "sc-desktop:home-banner";
 
 // Same defensive guard as player.svelte.ts's safeStorageGet/Set -- keeps
 // this a nice-to-have rather than something that can throw during startup.
@@ -27,10 +28,17 @@ function safeStorageSet(key: string, value: string) {
  */
 class SettingsStore {
   performanceMode = $state(safeStorageGet(PERFORMANCE_MODE_KEY) === "true");
+  /** Defaults off -- animated banner is opt-in, not everyone wants it. Absence of a saved value (new install) means "false". */
+  showHomeBanner = $state(safeStorageGet(HOME_BANNER_KEY) === "true");
 
   setPerformanceMode(on: boolean) {
     this.performanceMode = on;
     safeStorageSet(PERFORMANCE_MODE_KEY, String(on));
+  }
+
+  setShowHomeBanner(on: boolean) {
+    this.showHomeBanner = on;
+    safeStorageSet(HOME_BANNER_KEY, String(on));
   }
 }
 

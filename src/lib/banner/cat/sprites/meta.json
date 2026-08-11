@@ -1,0 +1,13 @@
+{
+  "frames": 15,
+  "fps": 30,
+  "cycleHz": 2,
+  "width": 177,
+  "height": 120,
+  "face": "right",
+  "colors": {
+    "body": "#FD6309",
+    "headphones": "#3F63A1"
+  },
+  "baked": true
+}

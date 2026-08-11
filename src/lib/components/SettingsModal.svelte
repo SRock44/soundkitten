@@ -80,6 +80,26 @@
         </button>
       </div>
 
+      <div class="setting-row">
+        <div class="setting-text">
+          <h3>Home banner</h3>
+          <p class="hint">
+            Shows an animated scene on the Home page (a running cat, synced to your local time of day and season).
+            Off by default -- turn on to replace the plain Home header with the cat animation.
+          </p>
+        </div>
+        <button
+          class="switch"
+          class:on={settings.showHomeBanner}
+          role="switch"
+          aria-checked={settings.showHomeBanner}
+          aria-label="Enable Home banner"
+          onclick={() => settings.setShowHomeBanner(!settings.showHomeBanner)}
+        >
+          <span class="switch-knob"></span>
+        </button>
+      </div>
+
       <hr />
 
       <h3>Manual client ID override</h3>

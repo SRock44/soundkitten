@@ -123,6 +123,7 @@
         break;
       case "toggleMute": player.toggleMute(); break;
       case "setVolume": player.setVolume(command.value); break;
+      case "playFromQueue": player.playFromQueue(player.queueIndex + 1 + command.index); break;
     }
   }
 
@@ -230,6 +231,17 @@
   // silently turning "structural changes only" into "also volume changes,
   // also every position tick", flooding the IPC channel and starving
   // everything else on the event loop long enough to look like a freeze).
+  //
+  // Depends on `player.queue` itself (the array reference), not
+  // `player.upcoming.length` -- shuffle reorders the queue **in place**
+  // (same length, same reference-replacing reassignment every time
+  // catDirector-style mutations happen: toggling shuffle on, landing on a
+  // freshly-randomized "next" slot, or dragging to reorder), so a
+  // length-only dependency silently missed every one of those and left the
+  // mini player's "Up next" list showing the pre-shuffle order until some
+  // unrelated change (a track boundary, a like) happened to also fire this
+  // effect. Reading the whole array re-tracks on every reassignment,
+  // shuffled or not.
   $effect(() => {
     player.current;
     isPlaying;
@@ -237,7 +249,7 @@
     player.loop;
     isLiked;
     isFollowing;
-    player.upcoming.length;
+    player.queue;
     untrack(() => emit("player:state", miniPlayerState()));
   });
 
@@ -354,6 +366,7 @@
         <ul>
           {#each player.upcoming as t, i}
             {@const absIndex = player.queueIndex + 1 + i}
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
             <li
               draggable="true"
               class:dragging={dragIndex === absIndex}
@@ -361,11 +374,16 @@
               ondragover={dragOver}
               ondrop={() => drop(absIndex)}
               ondragend={() => (dragIndex = null)}
+              onclick={() => player.playFromQueue(absIndex)}
+              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); player.playFromQueue(absIndex); } }}
+              role="button"
+              tabindex="0"
+              aria-label={`Play "${t.title ?? `Track #${t.id}`}" now`}
             >
               <span class="drag-handle"><Icon name="grip" size={12} /></span>
               <span class="qtitle">{t.title ?? `Track #${t.id}`}</span>
               <span class="qartist">{t.user?.username ?? ""}</span>
-              <button class="qremove" onclick={() => player.removeFromQueue(absIndex)} aria-label="Remove from queue"><Icon name="close" size={11} /></button>
+              <button class="qremove" onclick={(e) => { e.stopPropagation(); player.removeFromQueue(absIndex); }} aria-label="Remove from queue"><Icon name="close" size={11} /></button>
             </li>
           {/each}
         </ul>
