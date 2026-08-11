@@ -2,11 +2,14 @@
   import { api } from "../api";
   import { player } from "../stores/player.svelte";
   import { viewMode } from "../stores/viewMode.svelte";
+  import { settings } from "../stores/settings.svelte";
   import { isSystemPlaylist, type FeedEntry, type Playlist, type Profile, type Selection, type SystemPlaylist, type Track } from "../types";
   import TrackRow from "./TrackRow.svelte";
   import FeedRow from "./FeedRow.svelte";
   import PlaylistShelf from "./PlaylistShelf.svelte";
   import Icon from "./Icon.svelte";
+  import HomeBanner from "./HomeBanner.svelte";
+  import HomeBannerGear from "./HomeBannerGear.svelte";
   import { delay, syncWithCache } from "../localCache";
   import { syncStatus } from "../stores/syncStatus.svelte";
 
@@ -81,20 +84,27 @@
 </script>
 
 <div class="home">
-  <div class="hero">
-    <div>
-      <p class="hero-eyebrow">{greeting()}</p>
-      <h1>{me?.username ?? "Welcome back"}</h1>
+  {#if settings.showHomeBanner}
+    <HomeBanner {me} greeting={greeting()} />
+  {:else}
+    <div class="hero">
+      <!-- Keeps a gear reachable even with the banner off, so switching it
+           back on doesn't mean digging through the main Settings modal. -->
+      <HomeBannerGear variant="light" />
+      <div>
+        <p class="hero-eyebrow">{greeting()}</p>
+        <h1>{me?.username ?? "Welcome back"}</h1>
+      </div>
+      <div class="view-toggle" role="group" aria-label="Playlist display">
+        <button class:active={viewMode.playlistView === "tiles"} onclick={() => viewMode.setPlaylistView("tiles")} aria-label="Tile view" title="Tile view">
+          <Icon name="grid" size={15} />
+        </button>
+        <button class:active={viewMode.playlistView === "rows"} onclick={() => viewMode.setPlaylistView("rows")} aria-label="Row view" title="Row view">
+          <Icon name="list" size={15} />
+        </button>
+      </div>
     </div>
-    <div class="view-toggle" role="group" aria-label="Playlist display">
-      <button class:active={viewMode.playlistView === "tiles"} onclick={() => viewMode.setPlaylistView("tiles")} aria-label="Tile view" title="Tile view">
-        <Icon name="grid" size={15} />
-      </button>
-      <button class:active={viewMode.playlistView === "rows"} onclick={() => viewMode.setPlaylistView("rows")} aria-label="Row view" title="Row view">
-        <Icon name="list" size={15} />
-      </button>
-    </div>
-  </div>
+  {/if}
 
   <section class="module">
     <div class="section-header">
@@ -171,6 +181,7 @@
 }
 
 .hero {
+  position: relative;
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
