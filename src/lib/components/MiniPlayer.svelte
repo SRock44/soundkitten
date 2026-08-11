@@ -159,14 +159,24 @@
     send({ action: "setVolume", value: Number((e.target as HTMLInputElement).value) });
   }
 
+  // Range inputs (the volume slider) are deliberately NOT treated as a
+  // typing target -- dragging it with the mouse leaves it focused, and
+  // without this exception space would silently stop toggling playback
+  // right after you touch the volume, with no visible cause. Real text
+  // entry (search boxes, comments, playlist names) still blocks it.
+  function isTypingTarget(el: EventTarget | null): boolean {
+    if (!(el instanceof HTMLElement)) return false;
+    if (el.isContentEditable || el.tagName === "TEXTAREA") return true;
+    if (el.tagName === "INPUT") return (el as HTMLInputElement).type !== "range";
+    return false;
+  }
+
   // This is a separate window/webview with its own JS process and its own
   // `window` object -- the main app's space-bar play/pause handler
   // (PlayerBar.svelte's onGlobalKeydown) only ever sees keydowns in ITS
   // window, so space did nothing at all here until this existed.
   function onGlobalKeydown(e: KeyboardEvent) {
-    if (e.code !== "Space") return;
-    const el = e.target;
-    if (el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+    if (e.code !== "Space" || isTypingTarget(e.target)) return;
     e.preventDefault();
     send({ action: "toggle" });
   }

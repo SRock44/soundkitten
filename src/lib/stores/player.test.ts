@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PlayerStore } from "./player.svelte";
 import type { Track } from "../types";
 
@@ -34,6 +34,7 @@ function makeFakeAudioEl(): HTMLAudioElement {
   return {
     volume: 1,
     currentTime: 0,
+    duration: 0,
     paused: true,
     src: "",
     play: vi.fn(() => Promise.resolve()),
@@ -58,6 +59,13 @@ function makeMemoryStorage(): Storage {
 let player: PlayerStore;
 
 beforeEach(() => {
+  // attach() starts a real position-watchdog setInterval (see
+  // player.svelte.ts) -- fake timers keep every PlayerStore instance
+  // created in these tests (the shared `player` below, plus the ad-hoc ones
+  // some persistence tests create) from leaking a live interval past the
+  // test that created it. useRealTimers() in afterEach discards all of them
+  // in one shot, so no per-test cleanup is needed at each call site.
+  vi.useFakeTimers();
   // Node's built-in `localStorage` global throws without a configured
   // backing file, and it shadows happy-dom's -- swap in a plain in-memory
   // implementation so the "persists across instances" tests mean something.
@@ -66,6 +74,10 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("no network in tests"))));
   player = new PlayerStore();
   player.attach(makeFakeAudioEl());
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("shuffle", () => {
@@ -415,5 +427,177 @@ describe("playback persistence across app restarts", () => {
     restored.attach(fakeEl);
     await restored.restore();
     expect(restored.queue).toEqual([]);
+  });
+});
+
+describe("live position tracking (currentTime/duration/seek)", () => {
+  it("duration falls back to the current track's own metadata before the element reports one", () => {
+    player.play(makeTrack(1, { duration: 180000 })); // 180s
+    expect(player.duration).toBe(180);
+  });
+
+  it("onDurationChange() overrides the metadata fallback once the element has a real duration", () => {
+    player.play(makeTrack(1, { duration: 180000 }));
+    (player.audioEl as unknown as { duration: number }).duration = 172.4;
+    player.onDurationChange();
+    expect(player.duration).toBeCloseTo(172.4);
+  });
+
+  it("onTimeUpdate() syncs currentTime from the element", () => {
+    player.play(makeTrack(1));
+    (player.audioEl as unknown as { currentTime: number }).currentTime = 42;
+    player.onTimeUpdate();
+    expect(player.currentTime).toBe(42);
+  });
+
+  it("pendingSeek overrides the live position until it's consumed", async () => {
+    const tracks = [makeTrack(1), makeTrack(2)];
+    const saved = { queue: tracks, originalQueue: tracks, queueIndex: 0, positionSeconds: 91 };
+    localStorage.setItem("sc-desktop:playback", JSON.stringify(saved));
+
+    const restored = new PlayerStore();
+    restored.attach(makeFakeAudioEl());
+    await restored.restore();
+
+    expect(restored.pendingSeek).toBe(91);
+    // pendingSeek wins even though the (never-loaded) element itself is still at 0
+    expect(restored.currentTime).toBe(91);
+  });
+
+  it("seek() updates currentTime immediately, without waiting for a timeupdate event", () => {
+    player.play(makeTrack(1));
+    player.seek(55);
+    expect(player.currentTime).toBe(55);
+    expect((player.audioEl as unknown as { currentTime: number }).currentTime).toBe(55);
+  });
+
+  it("seek() does nothing without a known duration", () => {
+    player.play(makeTrack(1, { duration: 0 }));
+    player.seek(55);
+    expect(player.currentTime).toBe(0);
+  });
+
+  // The bug this whole suite exists to pin down: volume and playback
+  // position are two unrelated things, and nothing about changing one
+  // should ever be able to touch the other.
+  it("setVolume() never touches currentTime, duration, or the element's currentTime", () => {
+    player.play(makeTrack(1, { duration: 120000 }));
+    player.seek(30);
+    const audioEl = player.audioEl as unknown as { currentTime: number; volume: number };
+    expect(player.currentTime).toBe(30);
+
+    // Simulate a fast slider drag: many rapid setVolume calls in a row.
+    for (let i = 0; i <= 20; i++) player.setVolume(i / 20);
+
+    expect(player.currentTime).toBe(30);
+    expect(audioEl.currentTime).toBe(30);
+    expect(player.duration).toBe(120);
+    expect(audioEl.volume).toBe(1);
+  });
+
+  it("toggleMute() never touches currentTime or duration either", () => {
+    player.play(makeTrack(1));
+    player.seek(17);
+    player.toggleMute();
+    player.toggleMute();
+    expect(player.currentTime).toBe(17);
+  });
+});
+
+describe("position watchdog (self-heals a stalled timeupdate without disturbing seeks)", () => {
+  it("does nothing while timeupdate keeps arriving normally", () => {
+    player.play(makeTrack(1));
+    player.isPlaying = true;
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+
+    audioEl.currentTime = 5;
+    player.onTimeUpdate();
+    vi.advanceTimersByTime(500);
+    audioEl.currentTime = 10;
+    player.onTimeUpdate();
+    vi.advanceTimersByTime(500);
+
+    expect(player.currentTime).toBe(10); // exactly what the last real tick reported
+  });
+
+  it("resyncs currentTime from the element if timeupdate goes silent for ~1s while playing", () => {
+    player.play(makeTrack(1));
+    player.isPlaying = true;
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+
+    audioEl.currentTime = 5;
+    player.onTimeUpdate();
+
+    // Simulate playback continuing (the real element's position keeps
+    // advancing) while the timeupdate EVENT itself goes silent -- confirmed
+    // live that a flood of rapid, unrelated UI events (e.g. dragging the
+    // volume slider) can starve the event loop long enough for this to
+    // happen, even though the audio itself never stopped.
+    audioEl.currentTime = 23; // no onTimeUpdate() call to go with this
+
+    vi.advanceTimersByTime(1000);
+
+    expect(player.currentTime).toBe(23); // watchdog caught it without needing a track change
+  });
+
+  it("does not resync while paused", () => {
+    player.play(makeTrack(1));
+    player.isPlaying = false;
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+    audioEl.currentTime = 5;
+    player.onTimeUpdate();
+
+    audioEl.currentTime = 99;
+    vi.advanceTimersByTime(3000);
+
+    expect(player.currentTime).toBe(5); // watchdog only acts while isPlaying
+  });
+
+  it("does not clobber a fresh seek, even once the watchdog fires again shortly after", () => {
+    player.play(makeTrack(1));
+    player.isPlaying = true;
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+    audioEl.currentTime = 5;
+    player.onTimeUpdate();
+
+    vi.advanceTimersByTime(1500); // watchdog has now had at least one chance to fire on the pre-seek position
+
+    player.seek(77);
+    expect(player.currentTime).toBe(77);
+
+    vi.advanceTimersByTime(500); // less than the watchdog's ~900ms staleness threshold
+    expect(player.currentTime).toBe(77); // still exactly what seek() set
+
+    vi.advanceTimersByTime(1000); // now past the threshold -- watchdog ticks again
+    // Nothing changed audioEl.currentTime since the seek, so re-reading it is a no-op.
+    expect(player.currentTime).toBe(77);
+    expect(audioEl.currentTime).toBe(77);
+  });
+
+  it("picks up real playback advancement after a seek, once genuinely stalled", () => {
+    player.play(makeTrack(1));
+    player.isPlaying = true;
+    player.seek(10);
+
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+    audioEl.currentTime = 15; // playback continued past the seek point, event stalled again
+
+    vi.advanceTimersByTime(1000);
+
+    expect(player.currentTime).toBe(15);
+  });
+
+  it("destroy() stops the watchdog so it can't fire against a torn-down element", () => {
+    player.play(makeTrack(1));
+    player.isPlaying = true;
+    const audioEl = player.audioEl as unknown as { currentTime: number };
+    audioEl.currentTime = 5;
+    player.onTimeUpdate();
+
+    player.destroy();
+    audioEl.currentTime = 50;
+    vi.advanceTimersByTime(5000);
+
+    expect(player.currentTime).toBe(5); // no watchdog left to pick up the change
   });
 });
