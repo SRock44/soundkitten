@@ -228,8 +228,15 @@
         <p class="queue-empty">Nothing queued.</p>
       {:else}
         <ul>
-          {#each miniState.upcoming as t}
-            <li>
+          {#each miniState.upcoming as t, i}
+            <!-- svelte-ignore a11y_no_noninteractive_element_to_interactive_role -->
+            <li
+              onclick={() => send({ action: "playFromQueue", index: i })}
+              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); send({ action: "playFromQueue", index: i }); } }}
+              role="button"
+              tabindex="0"
+              aria-label={`Play "${t.title ?? `Track #${t.id}`}" now`}
+            >
               <span class="qtitle">{t.title ?? `Track #${t.id}`}</span>
               <span class="qartist">{t.user?.username ?? ""}</span>
             </li>
@@ -621,8 +628,14 @@
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.25rem 0;
+  padding: 0.25rem 0.3rem;
   font-size: 0.72rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.queue-view li:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .qtitle {

@@ -224,7 +224,9 @@ export type MiniPlayerCommand =
   | { action: "toggleFollow" }
   | { action: "seek"; position: number }
   | { action: "toggleMute" }
-  | { action: "setVolume"; value: number };
+  | { action: "setVolume"; value: number }
+  /** `index` is an offset into MiniPlayerState.upcoming (0 = the very next track), not an absolute queue index -- the mini player doesn't know queueIndex, so PlayerBar.svelte translates it. */
+  | { action: "playFromQueue"; index: number };
 
 /** Sent from the mini player when the user wants back into the full app -- optionally with a track to open directly. */
 export type MiniPlayerShowMain = { trackId: number | null };

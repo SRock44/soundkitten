@@ -204,7 +204,16 @@ export class PlayerStore {
     // to restore to.
     this.originalQueue = Array.isArray(saved.originalQueue) && saved.originalQueue.length > 0 ? saved.originalQueue : saved.queue;
     this.queueIndex = saved.queueIndex;
-    this.shuffleFrontier = saved.queueIndex;
+    // If shuffle was already on when this got saved, `saved.queue` IS the
+    // real, already-fully-shuffled order (persisted straight from `queue`)
+    // -- marking it as "unfixed" (the old behavior) meant the very next
+    // next() after every app restart would run _shuffleNextSlot() and
+    // silently swap in a *different* track than whatever the "Up next"
+    // panel had just shown, since that guard only treats indices <=
+    // shuffleFrontier as already settled. `this.shuffle` reflects the
+    // persisted setting already (loaded in the field initializer above,
+    // before restore() ever runs), so this is safe to check here.
+    this.shuffleFrontier = this.shuffle ? this.queue.length - 1 : saved.queueIndex;
     this.pendingSeek = saved.positionSeconds > 0 ? saved.positionSeconds : null;
   }
 
@@ -309,6 +318,12 @@ export class PlayerStore {
     this.queue = [...this.queue.slice(0, insertAt), track, ...this.queue.slice(insertAt)];
     const origInsertAt = this._origIndexOfCurrent() + 1;
     this.originalQueue = [...this.originalQueue.slice(0, origInsertAt), track, ...this.originalQueue.slice(origInsertAt)];
+    // Everything at/after insertAt just shifted right by one -- shuffleFrontier
+    // is an index into that same range, so it has to shift too or it'll end
+    // up pointing one slot short of the track it used to mark as "already
+    // fixed", letting _shuffleNextSlot() re-randomize a track that was
+    // already settled (and already shown as such in the queue panel).
+    if (insertAt <= this.shuffleFrontier) this.shuffleFrontier += 1;
     if (this.queueIndex < 0) {
       this.queueIndex = 0;
       this._loadCurrent();
@@ -333,6 +348,26 @@ export class PlayerStore {
     this.queue = this.queue.filter((_, i) => i !== index);
     if (removed) this.originalQueue = this.originalQueue.filter((t) => t.id !== removed.id);
     if (index < this.queueIndex) this.queueIndex -= 1;
+    if (index <= this.shuffleFrontier) this.shuffleFrontier -= 1; // mirror image of the playNext() shift above
+    this._persistQueue();
+  }
+
+  /**
+   * Jumps straight to `index` in the queue and starts playing it -- used by
+   * the "Up next" panel's click-to-play. Just moves the play head; doesn't
+   * reorder anything, so it works the same whether shuffle is on or off.
+   */
+  playFromQueue(index: number) {
+    if (!this.audioEl || index < 0 || index >= this.queue.length || index === this.queueIndex) return;
+    this.pendingSeek = null;
+    this.queueIndex = index;
+    // Jumping ahead of the fixed range means everything up to here is now
+    // "settled" too -- same as if the user had pressed next() that many
+    // times -- so a later next() doesn't turn around and re-shuffle a track
+    // that was just sitting there, visibly picked, in the queue panel.
+    if (this.shuffle && index > this.shuffleFrontier) this.shuffleFrontier = index;
+    this._loadCurrent(1, 0);
+    this._pushHistory(this.current);
     this._persistQueue();
   }
 
@@ -622,7 +657,13 @@ export class PlayerStore {
 
     this.queue = [...this.queue, ...fresh];
     this.originalQueue = [...this.originalQueue, ...fresh];
-    this.shuffleFrontier = this.queueIndex; // the newly-appended tail is unshuffled -- _shuffleNextSlot randomizes into it normally from here if shuffle is on
+    // Shuffle the newly-appended tail immediately rather than leaving it to
+    // the lazy per-slot shuffle -- otherwise the queue panel shows these
+    // related tracks in SoundCloud's original recommendation order (looking
+    // exactly like shuffle isn't applied at all) until you've stepped deep
+    // enough into them for _shuffleNextSlot to have touched each one.
+    if (this.shuffle) this._shuffleRemainingNow();
+    else this.shuffleFrontier = this.queueIndex;
     this.queueIndex += 1;
     this.notice = "Queue ended -- now playing related tracks";
     this._loadCurrent(1, 0);
@@ -630,7 +671,22 @@ export class PlayerStore {
     this._persistQueue();
   }
 
+  /** Restarting counts as "meaningfully into the track" past this point -- matches the ~3s threshold most music players use for skip-back. */
+  private static readonly RESTART_THRESHOLD_SECONDS = 3;
+
+  /**
+   * Standard music-player skip-back behavior: if the current track has
+   * already played past a few seconds, pressing "previous" restarts it from
+   * 0:00 instead of jumping to the actual previous track -- pressing it
+   * again (now at/near 0:00) is what actually goes back. Matches Spotify/
+   * Apple Music/etc, and means a stray double-tap near a track boundary
+   * doesn't skip two tracks back.
+   */
   previous() {
+    if (this.current && this.currentTime > PlayerStore.RESTART_THRESHOLD_SECONDS) {
+      this.seek(0);
+      return;
+    }
     this.pendingSeek = null;
     if (!this._stepIndex(-1)) return;
     this._loadCurrent(-1, 0);
