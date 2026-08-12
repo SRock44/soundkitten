@@ -14,6 +14,10 @@
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-informational" alt="Windows, macOS, Linux" />
 </p>
 
+<p align="center">
+  <img src="assets/home-banner.gif" alt="SoundKitten's animated Home banner: a cat running through a forest scene" width="420" />
+</p>
+
 ---
 
 ## Why
@@ -31,7 +35,6 @@ SoundCloud dropped their native Windows desktop app entirely. On Windows 11, the
 - Auto-updates, checked on launch (opt-in per update, never silent)
 
 <p align="center">
-  <img src="assets/home-banner.gif" alt="SoundKitten's animated Home banner: a cat running through a forest scene" width="420" /><br />
   <img src="assets/mini-player.gif" alt="SoundKitten mini player" width="360" />
 </p>
 
