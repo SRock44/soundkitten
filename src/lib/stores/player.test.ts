@@ -691,6 +691,31 @@ describe("autoplay related tracks when the queue ends", () => {
     expect(api.relatedTracks).not.toHaveBeenCalled();
   });
 
+  it("trims already-played tracks off the front instead of letting the queue grow forever across a long session", async () => {
+    const tracks = [makeTrack(0)];
+    player.play(tracks[0], tracks);
+    let nextId = 100;
+    vi.mocked(api.relatedTracks).mockImplementation(async () => [makeTrack(nextId++)]);
+
+    for (let i = 0; i < 60; i++) {
+      player.next();
+      await vi.waitFor(() => expect(player.current!.id).toBe(100 + i));
+    }
+
+    // 60 extensions happened, but the played-history cap keeps this from
+    // growing without bound -- see PlayerStore.MAX_PLAYED_QUEUE_HISTORY.
+    expect(player.queue.length).toBeLessThan(60);
+    expect(player.current!.id).toBe(159); // still the most recently fetched track
+    expect(player.queue[player.queue.length - 1].id).toBe(159);
+
+    // Trimming shouldn't have desynced originalQueue's bookkeeping -- toggling
+    // shuffle off (which rebuilds `queue` from it) should still land cleanly
+    // on the currently-playing track rather than losing it or throwing.
+    player.toggleShuffle();
+    player.toggleShuffle();
+    expect(player.current!.id).toBe(159);
+  });
+
   it("discards a stale related-tracks fetch if a different track was explicitly played in the meantime", async () => {
     const tracks = [makeTrack(1)];
     player.play(tracks[0], tracks);

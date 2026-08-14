@@ -90,17 +90,34 @@
     };
   });
 
+  // This window is only ever hidden, never destroyed (backToApp() above and
+  // the Rust CloseRequested handler in src-tauri/src/lib.rs both just call
+  // hide()), so closing it used to leave this <video> decoding and
+  // compositing an invisible loop for as long as a track kept playing --
+  // easily hours, since nothing ever told it the window went away. Track
+  // page visibility here and fold it into the same play/pause effect below.
+  let pageHidden = $state(document.visibilityState === "hidden");
+  $effect(() => {
+    function onVisibility() {
+      pageHidden = document.visibilityState === "hidden";
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  });
+
   $effect(() => {
     if (!videoEl || settings.performanceMode) return;
-    if (miniState.isPlaying) {
+    if (miniState.isPlaying && !pageHidden) {
       videoEl.play().catch(() => {});
     } else {
       videoEl.pause();
       // A paused mid-loop video freezes on whatever motion frame it happened
       // to be on (mid-jump, arms up...), which reads as "still dancing" even
       // though nothing's playing -- reset to the first frame so idle always
-      // looks calm/at-rest instead.
-      videoEl.currentTime = 0;
+      // looks calm/at-rest instead. Only when actually paused, not merely
+      // hidden -- resuming a still-playing track after reopening the window
+      // should pick the loop back up, not restart it from frame 0.
+      if (!miniState.isPlaying) videoEl.currentTime = 0;
     }
   });
 
