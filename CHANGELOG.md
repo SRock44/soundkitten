@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.5
+
+### Fixes
+- Fixed two things that made memory and CPU usage climb the longer a session ran: the queue used to grow without limit as "keep listening" kept appending related tracks (and re-saving the whole thing on every track change), and the mini player's cat-dance video kept playing in the background even after closing the mini player window.
+
 ## 0.2.4
 
 ### Fixes
