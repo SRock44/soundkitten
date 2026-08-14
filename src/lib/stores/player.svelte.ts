@@ -687,6 +687,7 @@ export class PlayerStore {
     if (this.shuffle) this._shuffleRemainingNow();
     else this.shuffleFrontier = this.queueIndex;
     this.queueIndex += 1;
+    this._trimPlayedHistory();
     this._showNotice("Queue ended -- now playing related tracks");
     this._loadCurrent(1, 0);
     this._pushHistory(this.current);
@@ -765,6 +766,31 @@ export class PlayerStore {
   private _pushHistory(track: Track | null) {
     if (!track) return;
     this.history = [track, ...this.history.filter((h) => h.id !== track.id)].slice(0, 20);
+  }
+
+  /**
+   * `_tryExtendWithRelated` is the only thing that grows the queue without
+   * a user-driven bound -- a long "keep listening" session can pull in
+   * hundreds of related tracks over a few hours, none of which ever got
+   * dropped. Both `queue` and `originalQueue` held onto every one of them
+   * forever, and `_persistQueue()` re-JSON.stringifies + re-writes the
+   * whole growing pair to localStorage on every single track change, so
+   * the longer a session ran the bigger (and slower) that got. Previous/
+   * "Up next" only ever need a modest look-back -- `history` itself is
+   * already capped at 20 -- so once there's more than this many already-
+   * played tracks behind the play head, drop the oldest ones off the
+   * front, same bookkeeping as removeFromQueue() above just batched.
+   */
+  private static readonly MAX_PLAYED_QUEUE_HISTORY = 50;
+
+  private _trimPlayedHistory() {
+    const excess = this.queueIndex - PlayerStore.MAX_PLAYED_QUEUE_HISTORY;
+    if (excess <= 0) return;
+    const droppedIds = new Set(this.queue.slice(0, excess).map((t) => t.id));
+    this.queue = this.queue.slice(excess);
+    this.queueIndex -= excess;
+    this.shuffleFrontier -= excess;
+    this.originalQueue = this.originalQueue.filter((t) => !droppedIds.has(t.id));
   }
 }
 
