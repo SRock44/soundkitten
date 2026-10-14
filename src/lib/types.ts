@@ -37,8 +37,8 @@ export type Track = {
 /**
  * Mirrors the backend's Track::candidate_transcodings selection (see
  * src-tauri/src/soundcloud/models.rs): only progressive or plain
- * (unencrypted) MP3-HLS are playable. Everything else -- real DRM
- * (Apple FairPlay / Widevine encrypted-hls) or AAC-only HLS -- isn't.
+ * (unencrypted) MP3/AAC HLS are playable. Everything else -- real DRM
+ * (Apple FairPlay / Widevine encrypted-hls) -- isn't.
  * Used to show a lock icon up front instead of letting the user hit play
  * and get a failure.
  */
@@ -51,7 +51,10 @@ export function isPlayable(track: Track): boolean {
   return transcodings.some((t) => {
     const protocol = t.format?.protocol;
     const mime = t.format?.mime_type;
-    return protocol === "progressive" || (protocol === "hls" && mime === "audio/mpeg");
+    return (
+      protocol === "progressive" ||
+      (protocol === "hls" && (mime === "audio/mpeg" || (mime?.startsWith("audio/mp4") ?? false)))
+    );
   });
 }
 
