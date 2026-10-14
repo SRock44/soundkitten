@@ -58,3 +58,24 @@ fn parses_playlists_with_and_without_tracks_field() {
     assert!(second.tracks.is_empty());
     assert_eq!(second.id, 556);
 }
+
+#[test]
+fn picks_unencrypted_aac_hls_and_skips_drm() {
+    use app_lib::soundcloud::models::Track;
+    let aac = |protocol: &str, preset: &str| {
+        format!(
+            r#"{{"url":"https://x/{preset}/{protocol}","preset":"{preset}","format":{{"protocol":"{protocol}","mime_type":"audio/mp4; codecs=\"mp4a.40.2\""}}}}"#
+        )
+    };
+    let track = |transcodings: String| -> Track {
+        serde_json::from_str(&format!(r#"{{"id":1,"streamable":true,"media":{{"transcodings":[{transcodings}]}}}}"#)).unwrap()
+    };
+
+    let plain = track(format!("{},{}", aac("hls", "aac_96k"), aac("hls", "aac_160k")));
+    let picked = plain.candidate_transcodings();
+    assert_eq!(picked.len(), 2);
+    assert_eq!(picked[0].preset.as_deref(), Some("aac_160k"));
+
+    let drm = track(format!("{},{}", aac("cbc-encrypted-hls", "aac_160k"), aac("hls", "aac_96k")));
+    assert!(drm.candidate_transcodings().is_empty());
+}

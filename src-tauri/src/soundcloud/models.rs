@@ -111,6 +111,8 @@ pub struct TranscodingFormat {
 pub struct Transcoding {
     pub url: String,
     pub format: Option<TranscodingFormat>,
+    #[serde(default)]
+    pub preset: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -151,11 +153,12 @@ pub struct Track {
 impl Track {
     /// Transcodings this app can actually play, in priority order:
     /// 1. progressive (a plain, directly playable MP3).
+    /// 3. plain (unencrypted) AAC-in-fMP4 HLS (see below).
     /// 2. plain (unencrypted) HLS with raw MP3 segments -- these concatenate
     ///    into one valid MP3 stream since MP3 frames are self-synchronizing.
     /// Deliberately excludes anything else, since on many monetized/label
-    /// tracks that's `cbc-encrypted-hls`/`ctr-encrypted-hls` (real DRM) or
-    /// AAC-in-fMP4 HLS, neither of which this app can play.
+    /// tracks that's `cbc-encrypted-hls`/`ctr-encrypted-hls` (real DRM),
+    /// which this app can't play.
     ///
     /// More than one is returned (not just the "best" one) because SoundCloud
     /// sometimes *lists* a progressive transcoding for a monetized track that
@@ -197,7 +200,23 @@ impl Track {
                     && format.and_then(|f| f.mime_type.as_deref()) == Some("audio/mpeg")
             })
             .collect();
+        // SoundCloud has dropped MP3 for most tracks: the common case now is
+        // plain (unencrypted) AAC in fMP4 HLS. Init segment + fragments
+        // concatenate into one playable fragmented MP4. Highest bitrate
+        // first; the `audio/mpegurl` abr_sq master playlist is excluded.
+        let mut hls_aac: Vec<&Transcoding> = self
+            .media
+            .transcodings
+            .iter()
+            .filter(|t| {
+                let format = t.format.as_ref();
+                format.and_then(|f| f.protocol.as_deref()) == Some("hls")
+                    && format.and_then(|f| f.mime_type.as_deref()).is_some_and(|m| m.starts_with("audio/mp4"))
+            })
+            .collect();
+        hls_aac.sort_by_key(|t| t.preset.as_deref() != Some("aac_160k"));
         progressive.extend(hls_mp3);
+        progressive.extend(hls_aac);
         progressive
     }
 

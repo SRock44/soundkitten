@@ -130,10 +130,10 @@ async fn fetch_progressive_audio(client: &reqwest::Client, stream_url: &str) -> 
 }
 
 /// Fetches an HLS VOD playlist and concatenates its segments into one byte
-/// buffer. Only used for plain (unencrypted) MP3-segment HLS -- see
-/// Track::preferred_transcoding for why encrypted/fMP4 HLS never reaches here.
+/// buffer. Only used for plain (unencrypted) HLS -- MP3 segments or AAC fMP4
+/// (see Track::candidate_transcodings; encrypted HLS never reaches here).
 /// MP3 frames are self-synchronizing, so concatenated segments form one
-/// valid, seekable MP3 stream.
+/// valid MP3 stream; fMP4 init + fragments form one fragmented MP4.
 async fn fetch_hls_audio(client: &reqwest::Client, playlist_url: &str) -> anyhow::Result<Vec<u8>> {
     let base = reqwest::Url::parse(playlist_url)?;
     let playlist_text = client.get(playlist_url).send().await?.error_for_status()?.text().await?;
@@ -150,6 +150,17 @@ async fn fetch_hls_audio(client: &reqwest::Client, playlist_url: &str) -> anyhow
     }
 
     let mut buf = Vec::new();
+    // fMP4 HLS (AAC) carries its codec setup in an init segment declared by
+    // #EXT-X-MAP; it must come first, followed by the fragments.
+    let init_url = playlist_text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("#EXT-X-MAP:"))
+        .and_then(|attrs| attrs.split("URI=\"").nth(1))
+        .and_then(|rest| rest.split('"').next())
+        .and_then(|u| base.join(u).ok());
+    if let Some(init_url) = init_url {
+        buf.extend_from_slice(&client.get(init_url).send().await?.error_for_status()?.bytes().await?);
+    }
     for seg_url in segment_urls {
         let bytes = client.get(seg_url).send().await?.error_for_status()?.bytes().await?;
         buf.extend_from_slice(&bytes);
